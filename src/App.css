@@ -1,0 +1,131 @@
+@font-face {
+  font-family: "Maple Mono NF CN";
+  src: url("./assets/fonts/MapleMono-NF-CN-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Maple Mono NF CN";
+  src: url("./assets/fonts/MapleMono-NF-CN-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; background: transparent; overflow: hidden; }
+body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-serif; user-select: none; }
+
+.pet-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  padding-top: 6px;
+  cursor: grab;
+  touch-action: none;
+}
+.pet-root.dragging { cursor: grabbing; }
+
+.bubble {
+  min-width: 220px;
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  padding: 5px 10px;
+  text-align: center;
+}
+.bubble pre {
+  margin: 0;
+  font-family: "Maple Mono NF CN", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #dfe6f5;
+  white-space: pre;
+}
+
+.pet {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+}
+.pet-shadow {
+  width: 62px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.45), transparent 70%);
+  filter: blur(1px);
+}
+
+.menu {
+  position: absolute;
+  top: 34px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 20, 26, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+.menu button {
+  background: transparent;
+  border: none;
+  color: #d5dcea;
+  font-size: 13px;
+  text-align: left;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.menu button:hover { background: rgba(122, 162, 255, 0.15); }
+.menu button.danger { color: #ff7a7a; }
+.menu button.danger:hover { background: rgba(255, 122, 122, 0.15); }
+
+.rename {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+  background: rgba(18, 20, 26, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 8px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+.rename input {
+  width: 150px;
+  background: #0f1220;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  outline: none;
+}
+.rename input:focus { border-color: #7aa2ff; }
+.rename button {
+  background: #1a2340;
+  border: 1px solid #3350a8;
+  color: #dfe6f5;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.rename button:hover { background: #22305a; }
