@@ -17,6 +17,7 @@
 html, body, #root { height: 100%; margin: 0; background: transparent; overflow: hidden; }
 body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-serif; user-select: none; }
 
+/* 显示范围：整窗 230x170，放得下气泡+宠物+菜单；抓取范围：仅 .pet 72x72 */
 .pet-root {
   position: relative;
   width: 100%;
@@ -25,28 +26,11 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  gap: 0;
-  padding-top: 6px;
-  cursor: grab;
+  gap: 2px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  cursor: default;
   touch-action: none;
-}
-.pet-root.dragging { cursor: grabbing; }
-
-.bubble {
-  min-width: 220px;
-  background: transparent;
-  border: none;
-  border-radius: 12px;
-  padding: 5px 10px;
-  text-align: center;
-}
-.bubble pre {
-  margin: 0;
-  font-family: "Maple Mono NF CN", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.4;
-  color: #dfe6f5;
-  white-space: pre;
 }
 
 .pet {
@@ -55,10 +39,31 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   display: grid;
   place-items: center;
   border-radius: 22px;
+  cursor: grab;
+  touch-action: none;
 }
+.pet.dragging { cursor: grabbing; }
+
+.bubble {
+  min-width: 210px;
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  padding: 2px 8px;
+  text-align: center;
+}
+.bubble pre {
+  margin: 0;
+  font-family: "Maple Mono NF CN", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #dfe6f5;
+  white-space: pre;
+}
+
 .pet-shadow {
-  width: 62px;
-  height: 8px;
+  width: 58px;
+  height: 7px;
   border-radius: 50%;
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.45), transparent 70%);
   filter: blur(1px);
@@ -66,7 +71,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 
 .menu {
   position: absolute;
-  top: 34px;
+  top: 36px;
   right: 8px;
   z-index: 20;
   display: flex;
@@ -95,7 +100,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 
 .rename {
   position: absolute;
-  top: 34px;
+  top: 36px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;

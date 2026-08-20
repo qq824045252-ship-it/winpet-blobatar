@@ -137,9 +137,8 @@ export default function App() {
 
   return (
     <div
-      className={`pet-root ${dragging ? "dragging" : ""}`}
+      className="pet-root"
       style={tauriOk ? undefined : { transform: `translate(${pos.x}px, ${pos.y}px)` }}
-      onPointerDown={onPointerDown}
       onDoubleClick={startRename}
       onContextMenu={(e) => { e.preventDefault(); setMenu(true); setEditing(false); }}
     >
@@ -149,7 +148,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="pet">
+      <div className={`pet ${dragging ? "dragging" : ""}`} onPointerDown={onPointerDown}>
         <Blobatar name={name} size={72} expression={activeExpr} animate="always" />
       </div>
       <div className="pet-shadow" />
