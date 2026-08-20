@@ -45,18 +45,18 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 .pet.dragging { cursor: grabbing; }
 
 .bubble {
-  min-width: 210px;
+  min-width: 220px;
   background: transparent;
   border: none;
   border-radius: 12px;
-  padding: 2px 8px;
+  padding: 5px 10px;
   text-align: center;
 }
 .bubble pre {
   margin: 0;
   font-family: "Maple Mono NF CN", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.4;
   color: #dfe6f5;
   white-space: pre;
 }
