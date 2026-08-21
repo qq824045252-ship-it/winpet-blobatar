@@ -12,6 +12,17 @@ dist
 dist-ssr
 *.local
 
+# Env & secrets — never commit credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
 # Rust / Tauri
 src-tauri/target
 src-tauri/gen/schemas
@@ -19,6 +30,11 @@ src-tauri/gen/schemas
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+
+# OS / temp
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 .idea
 .DS_Store
 *.suo
