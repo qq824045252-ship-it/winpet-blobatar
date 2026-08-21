@@ -1,8 +1,8 @@
 # Third-Party Notices / 第三方软件声明
 
-本文件列出本项目直接依赖的第三方组件及其许可信息。本声明仅适用于下列第三方组件本身，不代表 WinPet 项目整体采用相同许可证。
+本文件列出本项目直接依赖的第三方组件及其许可信息。本声明仅适用于下列第三方组件本身；WinPet 主项目另以根目录 `LICENSE` 的 MIT 许可发布。
 
-This file lists third-party components directly used by this project. It applies only to those components, not to the WinPet project as a whole.
+This file lists third-party components directly used by this project. It applies only to those components; the WinPet project itself is licensed separately under `LICENSE` (MIT).
 
 ---
 
@@ -61,5 +61,5 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## 关于 WinPet 项目自身许可
 
-- WinPet（本仓库 `winpet-blobatar`，`productName: WinPet`）**尚未单独声明开源许可证**，除上述第三方组件按其各自许可证（MIT）使用外，其余代码与资源**保留所有权利（All Rights Reserved）**。
-- 本文件不构成对 WinPet 整体以 MIT 许可的授权，引用 Blobatar 不代表 WinPet 整体为 MIT。
+- WinPet 主项目（本仓库 `winpet-blobatar`，`productName: WinPet`）采用 **MIT License**（见根目录 [`LICENSE`](./LICENSE)，`Copyright (c) 2026 qq824045252-ship-it`）。
+- 第三方组件（Blobatar / @blobatar/react 等）仍分别受其自身许可约束（MIT，见上），与 WinPet 主项目许可并存、互不覆盖。

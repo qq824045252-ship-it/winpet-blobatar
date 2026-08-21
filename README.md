@@ -2,6 +2,10 @@
 
 > 基于 **Tauri + React** 的 Windows 桌面宠物 / 系统状态助手。`Blobatar` 仅负责角色的**视觉、表情与动画**层；系统监控、窗口与托盘能力由 Rust/Tauri 后端与 React 前端实现。
 
+![WinPet preview](docs/assets/winpet-preview.png)
+
+*WinPet 实际运行效果（185×130 透明置顶窗口：状态气泡 + Blobatar 宠物）*
+
 ---
 
 ## 这是什么
@@ -117,6 +121,17 @@ winpet-blobatar/
 
 ---
 
+## 下载 / Releases
+
+最新稳定版请见 [GitHub Releases](https://github.com/qq824045252-ship-it/winpet-blobatar/releases)（或本仓库右侧 Releases 面板）。
+
+- **Portable 单文件 EXE（免安装）**：`WinPet-v0.1.0-portable-x64.exe` — 下载后双击直接运行，适合尝鲜/便携使用。
+- **安装程序**：`WinPet_0.1.0_x64-setup.exe`（NSIS）— 向导安装，适合长期使用；安装后可在开始菜单/桌面找到 WinPet。
+
+> 两个产物均由本仓库 `v0.1.0` Tag 通过 `npm run tauri:build` 构建，Release 备注中附 SHA256 校验值。具体下载链接请以 Releases 页面为准，勿使用固定直链硬编码。
+
+---
+
 ## 安装 / 开发 / 构建（Windows 新手可直接复制）
 
 > 要求：`Node.js >= 20`、`Rust stable`（`rustup` 安装）、`WebView2`（Win11 自带）
@@ -148,8 +163,8 @@ npm run tauri:build # 产物 src-tauri/target/release/bundle/
 
 ## 第三方授权
 
-- **Blobatar / @blobatar/react 均为 MIT License**（作者 `Alain`，`Copyright (c) 2026 Alain`），详见仓库内 **[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)**（内含 `node_modules/blobatar/LICENSE` 原文）。
-- **WinPet 项目自身**（本仓库除第三方组件外）**尚未单独声明开源许可证，保留所有权利（All Rights Reserved）**。本声明仅适用于第三方组件，不代表 WinPet 整体以 MIT 许可。
+- **Blobatar / @blobatar/react 均为 MIT License**（作者 `Alain`，`Copyright (c) 2026 Alain`），详见 **[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)**。
+- **WinPet 主项目**采用 **MIT License**（见 [`LICENSE`](./LICENSE)，`Copyright (c) 2026 qq824045252-ship-it`）。第三方组件仍分别受其自身许可约束。
 
 ---
 
@@ -161,5 +176,5 @@ npm run tauri:build # 产物 src-tauri/target/release/bundle/
 
 ## 许可说明
 
-- 第三方：见 `THIRD_PARTY_NOTICES.md`（MIT）
-- 本项目：未声明开源许可，**保留所有权利**。如需复用/商用请先取得仓库所有者授权。
+- 本项目：**MIT License**，见 [`LICENSE`](./LICENSE)
+- 第三方：见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)（Blobatar MIT）
