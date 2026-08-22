@@ -7,6 +7,7 @@ import {
 import "./App.css";
 
 const EXPRESSIONS = { idle, happy, sad, mad, surprised, scared, sick, sleepy, thinking, wink, smug, love, shy, unsure };
+const STORAGE_KEY = "winpet-tools-v1";
 
 function formatStats(s) {
   const net = s.net >= 1024 ? `${(s.net / 1024).toFixed(1)}M/s` : `${(s.net | 0)}K/s`;
@@ -45,7 +46,6 @@ function useStats() {
         timer = setInterval(tickTauri, 1000);
         tickTauri();
       } catch {
-        // browser preview: mock random walk
         if (cancelled) return;
         setTauriOk(false);
         timer = setInterval(() => {
@@ -71,6 +71,11 @@ function useStats() {
   return { stats: s, tauriOk };
 }
 
+async function invokeNative(command, args) {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke(command, args);
+}
+
 export default function App() {
   const { stats, tauriOk } = useStats();
   const autoExpr = useMemo(() => stateFromStats(stats), [stats]);
@@ -78,11 +83,37 @@ export default function App() {
   const [showBubble, setShowBubble] = useState(true);
   const [editing, setEditing] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [tool, setTool] = useState(null);
   const [draft, setDraft] = useState("");
+  const [exePath, setExePath] = useState("");
+  const [cmdText, setCmdText] = useState("");
+  const [clipboardText, setClipboardText] = useState("");
+  const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const inputRef = useRef(null);
+  const noticeTimer = useRef(null);
   const activeExpr = EXPRESSIONS[autoExpr] ?? idle;
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      setExePath(saved.exePath || "");
+      setCmdText(saved.cmdText || "");
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ exePath, cmdText }));
+  }, [exePath, cmdText]);
+
+  const toast = (text) => {
+    setNotice(text);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(""), 2800);
+  };
+
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
   const closeWindow = async () => {
     try {
@@ -91,7 +122,7 @@ export default function App() {
     } catch {}
   };
 
-  const startRename = () => { setDraft(name); setEditing(true); setMenu(false); };
+  const startRename = () => { setDraft(name); setEditing(true); setMenu(false); setTool(null); };
   const updateName = (v) => {
     setDraft(v);
     setName(v.trim() || "winpet");
@@ -103,9 +134,60 @@ export default function App() {
     setEditing(false);
   };
 
-  // drag: native window drag in Tauri, CSS translate fallback in browser
+  const openTool = async (nextTool) => {
+    setMenu(false);
+    setEditing(false);
+    setTool(nextTool);
+    if (nextTool === "clipboard") {
+      try {
+        const text = await invokeNative("get_clipboard");
+        setClipboardText(text || "");
+      } catch (err) {
+        setClipboardText("");
+        toast(String(err));
+      }
+    }
+  };
+
+  const launchExe = async () => {
+    try {
+      await invokeNative("launch_exe", { path: exePath });
+      toast("EXE 已启动");
+    } catch (err) { toast(String(err)); }
+  };
+
+  const runCmd = async () => {
+    try {
+      await invokeNative("run_cmd", { command: cmdText });
+      toast("CMD 已启动");
+    } catch (err) { toast(String(err)); }
+  };
+
+  const saveClipboard = async () => {
+    try {
+      await invokeNative("set_clipboard", { text: clipboardText });
+      toast("已写入剪贴板");
+    } catch (err) { toast(String(err)); }
+  };
+
+  const refreshClipboard = async () => {
+    try {
+      const text = await invokeNative("get_clipboard");
+      setClipboardText(text || "");
+      toast("剪贴板已刷新");
+    } catch (err) { toast(String(err)); }
+  };
+
+  const takeScreenshot = async () => {
+    setMenu(false);
+    try {
+      const path = await invokeNative("take_screenshot");
+      toast(`截图已保存：${path}`);
+    } catch (err) { toast(String(err)); }
+  };
+
   const onPointerDown = (e) => {
-    if (e.target.closest(".menu, .rename, button, input")) return;
+    if (e.target.closest(".menu, .rename, .tool-panel, button, input, textarea")) return;
     if (tauriOk) {
       import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {});
       return;
@@ -123,7 +205,6 @@ export default function App() {
     window.addEventListener("pointerup", up);
   };
 
-  // click elsewhere closes menu / rename box
   useEffect(() => {
     if (!menu && !editing) return;
     const close = (e) => {
@@ -140,7 +221,7 @@ export default function App() {
       className="pet-root"
       style={tauriOk ? undefined : { transform: `translate(${pos.x}px, ${pos.y}px)` }}
       onDoubleClick={startRename}
-      onContextMenu={(e) => { e.preventDefault(); setMenu(true); setEditing(false); }}
+      onContextMenu={(e) => { e.preventDefault(); setMenu(true); setEditing(false); setTool(null); }}
     >
       {showBubble && (
         <div className="bubble">
@@ -159,13 +240,15 @@ export default function App() {
           <button onClick={() => { setShowBubble((v) => !v); setMenu(false); }}>
             {showBubble ? "隐藏状态" : "显示状态"}
           </button>
+          <div className="menu-separator" />
+          <button onClick={() => openTool("launcher")}>启动程序 / CMD</button>
+          <button onClick={() => openTool("clipboard")}>剪贴板</button>
+          <button onClick={takeScreenshot}>截图</button>
+          <div className="menu-separator" />
           <button onClick={closeWindow}>隐藏到后台</button>
           <button className="danger" onClick={async () => {
             setMenu(false);
-            try {
-              const { invoke: inv } = await import("@tauri-apps/api/core");
-              await inv("quit_app");
-            } catch {}
+            try { await invokeNative("quit_app"); } catch {}
           }}>退出</button>
         </div>
       )}
@@ -186,6 +269,33 @@ export default function App() {
           <button onClick={commitName}>确定</button>
         </div>
       )}
+
+      {tool === "launcher" && (
+        <div className="tool-panel launcher-panel" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="tool-header"><strong>启动工具</strong><button onClick={() => setTool(null)}>×</button></div>
+          <label>EXE 路径</label>
+          <div className="tool-row">
+            <input value={exePath} onChange={(e) => setExePath(e.target.value)} placeholder="C:\\Program Files\\app.exe" />
+            <button onClick={launchExe}>启动</button>
+          </div>
+          <label>CMD 命令或 .cmd/.bat 路径</label>
+          <textarea value={cmdText} onChange={(e) => setCmdText(e.target.value)} placeholder="例如：ipconfig /all" />
+          <div className="tool-actions"><button onClick={runCmd}>运行 CMD</button></div>
+        </div>
+      )}
+
+      {tool === "clipboard" && (
+        <div className="tool-panel clipboard-panel" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="tool-header"><strong>剪贴板</strong><button onClick={() => setTool(null)}>×</button></div>
+          <textarea value={clipboardText} onChange={(e) => setClipboardText(e.target.value)} placeholder="当前文本剪贴板内容" />
+          <div className="tool-actions">
+            <button onClick={refreshClipboard}>刷新</button>
+            <button onClick={saveClipboard}>写入</button>
+          </div>
+        </div>
+      )}
+
+      {notice && <div className="notice">{notice}</div>}
     </div>
   );
 }
