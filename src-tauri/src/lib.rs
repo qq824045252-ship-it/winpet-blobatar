@@ -156,23 +156,65 @@ fn remove_temp_capture(path: &str) {
     }
 }
 
-fn validate_saved_screenshot(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
-    let root = app
-        .path()
-        .picture_dir()
-        .map_err(|err| format!("无法定位图片目录: {err}"))?
-        .join("WinPet");
-    fs::create_dir_all(&root).map_err(|err| format!("无法创建截图目录: {err}"))?;
+fn decode_png(data_base64: &str) -> Result<Vec<u8>, String> {
+    let bytes = BASE64
+        .decode(data_base64.as_bytes())
+        .map_err(|err| format!("截图数据无效: {err}"))?;
+    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err("截图数据不是有效 PNG".into());
+    }
+    Ok(bytes)
+}
+
+fn create_pin_window(
+    app: &AppHandle,
+    store: &PinStore,
+    path: &Path,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let root = temp_capture_root();
+    fs::create_dir_all(&root).map_err(|err| format!("无法创建临时截图目录: {err}"))?;
     let root = root
         .canonicalize()
-        .map_err(|err| format!("无法校验截图目录: {err}"))?;
-    let candidate = PathBuf::from(path)
+        .map_err(|err| format!("无法校验临时截图目录: {err}"))?;
+    let candidate = path
         .canonicalize()
-        .map_err(|err| format!("截图文件不存在: {err}"))?;
+        .map_err(|err| format!("临时截图文件不存在: {err}"))?;
     if !candidate.starts_with(root) {
-        return Err("只能钉住 WinPet 自己保存的截图".into());
+        return Err("钉图只能读取 WinPet 自己的临时截图".into());
     }
-    Ok(candidate)
+
+    let id = store.next.fetch_add(1, Ordering::SeqCst) + 1;
+    let label = format!("pin-{id}");
+    store
+        .paths
+        .lock()
+        .map_err(|_| "钉图状态已损坏".to_string())?
+        .insert(label.clone(), candidate.to_string_lossy().to_string());
+
+    let mut w = width.max(80.0);
+    let mut h = height.max(60.0);
+    let scale = (1200.0 / w).min(800.0 / h).min(1.0);
+    w *= scale;
+    h *= scale;
+
+    if let Err(err) = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+        .title("WinPet Pin")
+        .inner_size(w, h)
+        .decorations(false)
+        .always_on_top(true)
+        .resizable(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .build()
+    {
+        if let Ok(mut paths) = store.paths.lock() {
+            paths.remove(&label);
+        }
+        return Err(format!("创建钉图窗口失败: {err}"));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -357,13 +399,7 @@ fn save_screenshot_png(
     data_base64: String,
     source_path: String,
 ) -> Result<String, String> {
-    let bytes = BASE64
-        .decode(data_base64.as_bytes())
-        .map_err(|err| format!("截图数据无效: {err}"))?;
-    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err("截图数据不是有效 PNG".into());
-    }
-
+    let bytes = decode_png(&data_base64)?;
     let dir = app
         .path()
         .picture_dir()
@@ -377,44 +413,27 @@ fn save_screenshot_png(
 }
 
 #[tauri::command]
-async fn pin_screenshot(
+fn pin_screenshot_png(
     app: tauri::AppHandle,
     state: tauri::State<'_, PinStore>,
-    path: String,
+    data_base64: String,
+    source_path: String,
     width: f64,
     height: f64,
-) -> Result<(), String> {
-    let path = validate_saved_screenshot(&app, &path)?;
-    let id = state.next.fetch_add(1, Ordering::SeqCst) + 1;
-    let label = format!("pin-{id}");
-    state
-        .paths
-        .lock()
-        .map_err(|_| "钉图状态已损坏".to_string())?
-        .insert(label.clone(), path.to_string_lossy().to_string());
+) -> Result<String, String> {
+    let bytes = decode_png(&data_base64)?;
+    let dir = temp_capture_root();
+    fs::create_dir_all(&dir).map_err(|err| format!("无法创建临时截图目录: {err}"))?;
+    let path = dir.join(format!("pin-{}.png", timestamp_millis()));
+    fs::write(&path, bytes).map_err(|err| format!("创建临时钉图失败: {err}"))?;
 
-    let mut w = width.max(80.0);
-    let mut h = height.max(60.0);
-    let scale = (1200.0 / w).min(800.0 / h).min(1.0);
-    w *= scale;
-    h *= scale;
-
-    if let Err(err) = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
-        .title("WinPet Pin")
-        .inner_size(w, h)
-        .decorations(false)
-        .always_on_top(true)
-        .resizable(true)
-        .skip_taskbar(true)
-        .shadow(false)
-        .build()
-    {
-        if let Ok(mut paths) = state.paths.lock() {
-            paths.remove(&label);
-        }
-        return Err(format!("创建钉图窗口失败: {err}"));
+    if let Err(err) = create_pin_window(&app, state.inner(), &path, width, height) {
+        remove_temp_capture(&path.to_string_lossy());
+        return Err(err);
     }
-    Ok(())
+
+    remove_temp_capture(&source_path);
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -495,6 +514,13 @@ pub fn run() {
                 {
                     api.prevent_close();
                     let _ = window.hide();
+                } else if window.label().starts_with("pin-") {
+                    let state = window.app_handle().state::<PinStore>();
+                    if let Ok(mut paths) = state.paths.lock() {
+                        if let Some(path) = paths.remove(window.label()) {
+                            remove_temp_capture(&path);
+                        }
+                    }
                 }
             }
         })
@@ -509,7 +535,7 @@ pub fn run() {
             prepare_screenshot,
             discard_screenshot_capture,
             save_screenshot_png,
-            pin_screenshot,
+            pin_screenshot_png,
             get_pin_path,
             quit_app
         ])
