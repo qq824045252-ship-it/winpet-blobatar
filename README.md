@@ -22,6 +22,9 @@
 - 🐱 **会变表情的桌面宠物**：根据系统负载自动切换 14 种表情
 - 📊 **实时系统监控**：CPU / 内存 / 磁盘 / 网络状态一目了然
 - 🖱️ **轻量交互**：支持拖动、双击改名、右键菜单、托盘常驻
+- 🚀 **快捷启动**：可保存一个 EXE 路径，也可保存并运行 CMD 命令或 `.cmd/.bat` 脚本
+- 📋 **剪贴板工具**：直接查看、刷新、编辑并重新写入当前文本剪贴板
+- 📸 **一键截图**：捕获 Windows 虚拟桌面并保存到“图片/WinPet”目录
 - 🪟 **透明置顶窗口**：不挡视线，随时可用
 - 📦 **双模式发布**：Portable 免安装版 + 正式安装包
 
@@ -36,6 +39,18 @@
 | 其他情况 | `idle` |
 
 支持的表情：`idle / happy / sad / mad / surprised / scared / sick / sleepy / thinking / wink / smug / love / shy / unsure`
+
+---
+
+## 🧰 桌面工具
+
+右键宠物即可打开工具入口：
+
+- **启动程序 / CMD**：填写 EXE 完整路径即可启动；CMD 输入支持普通命令，也支持 `.cmd/.bat` 文件路径。配置会保存在本机，下次启动继续使用。
+- **剪贴板**：读取当前文本剪贴板内容，可直接修改后重新写回。
+- **截图**：捕获当前 Windows 虚拟桌面（包含多显示器区域），PNG 默认保存在系统“图片/WinPet”目录。
+
+> EXE/CMD 能力只会执行你主动填写的本机路径或命令。开源版本不会内置、下载或静默执行任何外部程序。
 
 ---
 
@@ -59,6 +74,7 @@
 - Node.js ≥ 20
 - Rust stable（通过 `rustup` 安装）
 - WebView2（Windows 11 自带，Windows 10 需安装）
+- Windows PowerShell 5.1+（剪贴板与截图功能使用系统 PowerShell 能力）
 
 ### 快速开始
 
@@ -73,7 +89,7 @@ npm ci
 # 3. 仅前端预览（浏览器 mock 数据）
 npm run dev          # http://localhost:5179
 
-# 4. 完整桌面宠物（含系统采样）
+# 4. 完整桌面宠物（含系统采样与桌面工具）
 npm run tauri:dev
 
 # 5. 打包 Windows 安装包
@@ -86,22 +102,23 @@ npm run tauri:build  # 产物在 src-tauri/target/release/bundle/
 
 ```mermaid
 flowchart TD
-  A[Tauri / Rust 后端<br/>sysinfo 采样 / Tray / Window] -- invoke --> B[React 前端<br/>状态 / 交互 / 表情映射]
+  A[Tauri / Rust 后端<br/>sysinfo / Tray / Window / Desktop Tools] -- invoke --> B[React 前端<br/>状态 / 交互 / 表情映射]
   B -- name / expression --> C[Blobatar 渲染层]
   C --> D[透明桌面窗口]
   B <--> E[系统托盘]
+  A --> F[EXE / CMD / Clipboard / Screenshot]
 ```
 
-- **后端**（Rust / Tauri）：只负责系统采样、窗口与托盘，不绘制角色
-- **前端**（React）：负责业务逻辑、交互和表情映射
+- **后端**（Rust / Tauri）：负责系统采样、窗口与托盘，以及 EXE/CMD、剪贴板、截图等 Windows 原生能力
+- **前端**（React）：负责业务逻辑、交互、工具面板和表情映射
 - **Blobatar**：只负责视觉与动画渲染
 
 ### 核心文件
 
 | 路径 | 职责 |
 |------|------|
-| `src/App.jsx` | 主组件：状态管理、表情映射、拖动、菜单、改名 |
-| `src-tauri/src/lib.rs` | 系统监控采样 + 托盘 / 窗口事件 |
+| `src/App.jsx` | 主组件：状态管理、表情映射、拖动、菜单、改名与桌面工具 UI |
+| `src-tauri/src/lib.rs` | 系统监控采样、托盘 / 窗口事件、EXE/CMD、剪贴板与截图命令 |
 | `src-tauri/tauri.conf.json` | 窗口配置（透明、置顶、尺寸等） |
 
 ---
@@ -110,7 +127,7 @@ flowchart TD
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Tauri 2.11 / Rust / sysinfo |
+| 后端 | Tauri 2.11 / Rust / sysinfo / Windows PowerShell |
 | 前端 | React 19 / Vite 8 / @tauri-apps/api |
 | 角色视觉 | blobatar 2.2.0 / @blobatar/react 2.2.0 |
 | 工具 | oxlint / @tauri-apps/cli |
