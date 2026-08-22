@@ -197,7 +197,59 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   justify-content: flex-end;
   gap: 5px;
 }
-.clipboard-panel textarea { min-height: 84px; }
+
+.clipboard-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.clipboard-list::-webkit-scrollbar { width: 4px; }
+.clipboard-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+.tool-panel .clipboard-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e6ebf5;
+  text-align: left;
+}
+.tool-panel .clipboard-item:hover {
+  background: rgba(122, 162, 255, 0.13);
+  border-color: rgba(122, 162, 255, 0.28);
+}
+.clipboard-preview {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clipboard-time {
+  color: #78849a;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.clipboard-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 10px;
+  color: #778297;
+  font-size: 10px;
+  text-align: center;
+}
 
 .notice {
   position: absolute;
