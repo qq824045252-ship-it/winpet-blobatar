@@ -185,7 +185,7 @@ fn get_clipboard() -> Result<String, String> {
         return Err("当前剪贴板不是可读取的文本内容".into());
     }
     Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end_matches(['\r', '\n'])
+        .trim_end_matches(|c| c == '\r' || c == '\n')
         .to_string())
 }
 
