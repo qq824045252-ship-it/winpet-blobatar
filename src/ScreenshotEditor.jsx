@@ -225,19 +225,31 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     const canvas = editCanvasRef.current;
     if (!canvas) return;
     setSaving(true);
+    let savedPath = null;
     try {
       const dataBase64 = canvas.toDataURL("image/png").split(",")[1];
-      const path = await invoke("save_screenshot_png", { dataBase64, sourcePath: capture.path });
+      savedPath = await invoke("save_screenshot_png", { dataBase64, sourcePath: capture.path });
       if (pin) {
         const rect = canvas.getBoundingClientRect();
-        await invoke("pin_screenshot", {
-          path,
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-        });
+        try {
+          await invoke("pin_screenshot", {
+            path: savedPath,
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          });
+        } catch (pinError) {
+          await onFinish(savedPath);
+          window.alert(`截图已保存，但钉住失败：${String(pinError)}`);
+          return;
+        }
       }
-      await onFinish(path);
+      await onFinish(savedPath);
     } catch (error) {
+      if (savedPath) {
+        await onFinish(savedPath);
+        window.alert(`截图已保存：${savedPath}\n后续操作失败：${String(error)}`);
+        return;
+      }
       window.alert(String(error));
       setSaving(false);
     }
