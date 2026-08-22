@@ -12,6 +12,12 @@ use tauri::{AppHandle, Manager, WindowEvent};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+extern "system" {
+    fn GetClipboardSequenceNumber() -> u32;
+}
+
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 
@@ -177,12 +183,25 @@ fn run_cmd(command: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn clipboard_sequence() -> u32 {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        return GetClipboardSequenceNumber();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        0
+    }
+}
+
+#[tauri::command]
 fn get_clipboard() -> Result<String, String> {
-    let output = powershell("Get-Clipboard -Raw")
+    let output = powershell("Get-Clipboard -Format Text -Raw")
         .output()
         .map_err(|err| format!("读取剪贴板失败: {err}"))?;
     if !output.status.success() {
-        return Err("当前剪贴板不是可读取的文本内容".into());
+        return Err("当前剪贴板不是文本内容".into());
     }
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim_end_matches(|c| c == '\r' || c == '\n')
@@ -306,7 +325,6 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 关闭窗口时隐藏到托盘，托盘菜单“退出”才真正退出
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "pet"
                     && !window
@@ -325,6 +343,7 @@ pub fn run() {
             drag_window,
             launch_exe,
             run_cmd,
+            clipboard_sequence,
             get_clipboard,
             set_clipboard,
             take_screenshot,
