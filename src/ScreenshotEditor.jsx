@@ -220,36 +220,28 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     setAnnotations((items) => [...items, item]);
   };
 
-  const finish = async (pin) => {
+  const finish = async (action) => {
     if (saving) return;
     const canvas = editCanvasRef.current;
     if (!canvas) return;
     setSaving(true);
-    let savedPath = null;
     try {
       const dataBase64 = canvas.toDataURL("image/png").split(",")[1];
-      savedPath = await invoke("save_screenshot_png", { dataBase64, sourcePath: capture.path });
-      if (pin) {
-        const rect = canvas.getBoundingClientRect();
-        try {
-          await invoke("pin_screenshot", {
-            path: savedPath,
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-          });
-        } catch (pinError) {
-          await onFinish(savedPath);
-          window.alert(`截图已保存，但钉住失败：${String(pinError)}`);
-          return;
-        }
-      }
-      await onFinish(savedPath);
-    } catch (error) {
-      if (savedPath) {
-        await onFinish(savedPath);
-        window.alert(`截图已保存：${savedPath}\n后续操作失败：${String(error)}`);
+      if (action === "save") {
+        const path = await invoke("save_screenshot_png", { dataBase64, sourcePath: capture.path });
+        await onFinish(path);
         return;
       }
+
+      const rect = canvas.getBoundingClientRect();
+      await invoke("pin_screenshot_png", {
+        dataBase64,
+        sourcePath: capture.path,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+      await onFinish(null);
+    } catch (error) {
       window.alert(String(error));
       setSaving(false);
     }
@@ -284,8 +276,8 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
         <button disabled={!annotations.length} onClick={() => setAnnotations((items) => items.slice(0, -1))}>撤销</button>
         <div className="shot-toolbar-spacer" />
         <button className="shot-secondary" onClick={onCancel}>取消</button>
-        <button className="shot-primary" disabled={saving} onClick={() => finish(false)}>{saving ? "保存中…" : "保存"}</button>
-        <button className="shot-primary" disabled={saving} onClick={() => finish(true)}>保存并钉住</button>
+        <button className="shot-primary" disabled={saving} onClick={() => finish("save")}>{saving ? "处理中…" : "保存"}</button>
+        <button className="shot-primary" disabled={saving} onClick={() => finish("pin")}>钉住</button>
       </div>
       <div className="shot-canvas-wrap">
         <canvas
