@@ -1,0 +1,166 @@
+.shot-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: 100%;
+  height: 100%;
+  background: #0b0d12;
+  color: #eef3ff;
+  user-select: none;
+}
+
+.shot-loading,
+.pin-loading {
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: #cdd6ea;
+}
+
+.shot-select-root {
+  cursor: crosshair;
+  overflow: hidden;
+}
+
+.shot-select-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.shot-hint {
+  position: absolute;
+  left: 50%;
+  top: 18px;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(11, 14, 21, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f1f5ff;
+  font-size: 12px;
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.shot-edit-root {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.shot-toolbar {
+  flex: 0 0 auto;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(13, 16, 23, 0.98);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.shot-toolbar button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #171b25;
+  color: #dfe7f6;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.shot-toolbar button:hover:not(:disabled) {
+  background: #202737;
+}
+
+.shot-toolbar button.active {
+  border-color: #5d96ff;
+  background: #19305b;
+  color: #fff;
+}
+
+.shot-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.shot-toolbar .shot-primary {
+  border-color: #396fd8;
+  background: #2757b7;
+  color: white;
+}
+
+.shot-toolbar .shot-primary:hover:not(:disabled) {
+  background: #3269d4;
+}
+
+.shot-toolbar .shot-secondary {
+  color: #bac4d8;
+}
+
+.shot-divider {
+  width: 1px;
+  height: 26px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 0 2px;
+}
+
+.shot-toolbar-spacer {
+  flex: 1;
+}
+
+.shot-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, #171b23 25%, transparent 25%),
+    linear-gradient(-45deg, #171b23 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #171b23 75%),
+    linear-gradient(-45deg, transparent 75%, #171b23 75%),
+    #10131a;
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+.shot-edit-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  box-shadow: 0 16px 48px rgba(0,0,0,.45);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pin-root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: transparent;
+  cursor: grab;
+  user-select: none;
+}
+
+.pin-root:active {
+  cursor: grabbing;
+}
+
+.pin-root img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+}
