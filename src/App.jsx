@@ -8,6 +8,8 @@ import "./App.css";
 
 const EXPRESSIONS = { idle, happy, sad, mad, surprised, scared, sick, sleepy, thinking, wink, smug, love, shy, unsure };
 const STORAGE_KEY = "winpet-tools-v1";
+const CLIPBOARD_HISTORY_KEY = "winpet-clipboard-history-v1";
+const MAX_CLIPBOARD_ITEMS = 50;
 
 function formatStats(s) {
   const net = s.net >= 1024 ? `${(s.net / 1024).toFixed(1)}M/s` : `${(s.net | 0)}K/s`;
@@ -20,6 +22,14 @@ function stateFromStats(s) {
   if (s.mem > 85) return "sad";
   if (s.net > 200) return "surprised";
   return "idle";
+}
+
+function formatClipboardTime(value) {
+  try {
+    return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
 }
 
 function useStats() {
@@ -87,7 +97,14 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [exePath, setExePath] = useState("");
   const [cmdText, setCmdText] = useState("");
-  const [clipboardText, setClipboardText] = useState("");
+  const [clipboardHistory, setClipboardHistory] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CLIPBOARD_HISTORY_KEY) || "[]");
+      return Array.isArray(saved) ? saved.slice(0, MAX_CLIPBOARD_ITEMS) : [];
+    } catch {
+      return [];
+    }
+  });
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
@@ -106,6 +123,57 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ exePath, cmdText }));
   }, [exePath, cmdText]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CLIPBOARD_HISTORY_KEY, JSON.stringify(clipboardHistory));
+    } catch {}
+  }, [clipboardHistory]);
+
+  useEffect(() => {
+    if (!tauriOk) return undefined;
+
+    let cancelled = false;
+    let busy = false;
+    let lastSequence = null;
+
+    const captureTextClipboard = async () => {
+      if (cancelled || busy) return;
+      busy = true;
+      try {
+        const sequence = await invokeNative("clipboard_sequence");
+        if (sequence === lastSequence) return;
+        lastSequence = sequence;
+
+        let text;
+        try {
+          text = await invokeNative("get_clipboard");
+        } catch {
+          return;
+        }
+        if (typeof text !== "string" || !text.trim()) return;
+
+        setClipboardHistory((prev) => {
+          if (prev[0]?.text === text) return prev;
+          const item = {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            text,
+            capturedAt: Date.now(),
+          };
+          return [item, ...prev.filter((entry) => entry.text !== text)].slice(0, MAX_CLIPBOARD_ITEMS);
+        });
+      } finally {
+        busy = false;
+      }
+    };
+
+    captureTextClipboard();
+    const timer = setInterval(captureTextClipboard, 500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [tauriOk]);
 
   const toast = (text) => {
     setNotice(text);
@@ -134,19 +202,10 @@ export default function App() {
     setEditing(false);
   };
 
-  const openTool = async (nextTool) => {
+  const openTool = (nextTool) => {
     setMenu(false);
     setEditing(false);
     setTool(nextTool);
-    if (nextTool === "clipboard") {
-      try {
-        const text = await invokeNative("get_clipboard");
-        setClipboardText(text || "");
-      } catch (err) {
-        setClipboardText("");
-        toast(String(err));
-      }
-    }
   };
 
   const launchExe = async () => {
@@ -163,18 +222,10 @@ export default function App() {
     } catch (err) { toast(String(err)); }
   };
 
-  const saveClipboard = async () => {
+  const copyClipboardItem = async (text) => {
     try {
-      await invokeNative("set_clipboard", { text: clipboardText });
-      toast("已写入剪贴板");
-    } catch (err) { toast(String(err)); }
-  };
-
-  const refreshClipboard = async () => {
-    try {
-      const text = await invokeNative("get_clipboard");
-      setClipboardText(text || "");
-      toast("剪贴板已刷新");
+      await invokeNative("set_clipboard", { text });
+      toast("已复制");
     } catch (err) { toast(String(err)); }
   };
 
@@ -242,7 +293,7 @@ export default function App() {
           </button>
           <div className="menu-separator" />
           <button onClick={() => openTool("launcher")}>启动程序 / CMD</button>
-          <button onClick={() => openTool("clipboard")}>剪贴板</button>
+          <button onClick={() => openTool("clipboard")}>文本剪贴板</button>
           <button onClick={takeScreenshot}>截图</button>
           <div className="menu-separator" />
           <button onClick={closeWindow}>隐藏到后台</button>
@@ -286,11 +337,19 @@ export default function App() {
 
       {tool === "clipboard" && (
         <div className="tool-panel clipboard-panel" onPointerDown={(e) => e.stopPropagation()}>
-          <div className="tool-header"><strong>剪贴板</strong><button onClick={() => setTool(null)}>×</button></div>
-          <textarea value={clipboardText} onChange={(e) => setClipboardText(e.target.value)} placeholder="当前文本剪贴板内容" />
-          <div className="tool-actions">
-            <button onClick={refreshClipboard}>刷新</button>
-            <button onClick={saveClipboard}>写入</button>
+          <div className="tool-header">
+            <strong>文本剪贴板 · {clipboardHistory.length}</strong>
+            <button onClick={() => setTool(null)}>×</button>
+          </div>
+          <div className="clipboard-list">
+            {clipboardHistory.length === 0 ? (
+              <div className="clipboard-empty">复制文字后会自动出现在这里</div>
+            ) : clipboardHistory.map((item) => (
+              <button className="clipboard-item" key={item.id} onClick={() => copyClipboardItem(item.text)}>
+                <span className="clipboard-preview">{item.text.replace(/\s+/g, " ").trim()}</span>
+                <span className="clipboard-time">{formatClipboardTime(item.capturedAt)}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
