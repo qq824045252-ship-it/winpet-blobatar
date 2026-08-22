@@ -4,6 +4,7 @@ import "blobatar/motion.css";
 import {
   idle, happy, sad, mad, surprised, scared, sick, sleepy, thinking, wink, smug, love, shy, unsure,
 } from "blobatar/expression";
+import ScreenshotEditor from "./ScreenshotEditor.jsx";
 import "./App.css";
 
 const EXPRESSIONS = { idle, happy, sad, mad, surprised, scared, sick, sleepy, thinking, wink, smug, love, shy, unsure };
@@ -97,6 +98,7 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [exePath, setExePath] = useState("");
   const [cmdText, setCmdText] = useState("");
+  const [screenshot, setScreenshot] = useState(null);
   const [clipboardHistory, setClipboardHistory] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(CLIPBOARD_HISTORY_KEY) || "[]");
@@ -110,6 +112,7 @@ export default function App() {
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const inputRef = useRef(null);
   const noticeTimer = useRef(null);
+  const windowSnapshotRef = useRef(null);
   const activeExpr = EXPRESSIONS[autoExpr] ?? idle;
 
   useEffect(() => {
@@ -131,7 +134,7 @@ export default function App() {
   }, [clipboardHistory]);
 
   useEffect(() => {
-    if (!tauriOk) return undefined;
+    if (!tauriOk || screenshot) return undefined;
 
     let cancelled = false;
     let busy = false;
@@ -173,12 +176,12 @@ export default function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [tauriOk]);
+  }, [tauriOk, screenshot]);
 
   const toast = (text) => {
     setNotice(text);
     clearTimeout(noticeTimer.current);
-    noticeTimer.current = setTimeout(() => setNotice(""), 2800);
+    noticeTimer.current = setTimeout(() => setNotice(""), 3600);
   };
 
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
@@ -229,12 +232,64 @@ export default function App() {
     } catch (err) { toast(String(err)); }
   };
 
-  const takeScreenshot = async () => {
-    setMenu(false);
+  const restorePetWindow = async (path) => {
     try {
-      const path = await invokeNative("take_screenshot");
-      toast(`截图已保存：${path}`);
-    } catch (err) { toast(String(err)); }
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const current = getCurrentWindow();
+      const snapshot = windowSnapshotRef.current;
+      await current.hide();
+      setScreenshot(null);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (snapshot) {
+        await current.setPosition(snapshot.position);
+        await current.setSize(snapshot.size);
+        await current.setResizable(snapshot.resizable);
+      }
+      await current.show();
+      await current.setFocus();
+    } catch {}
+    windowSnapshotRef.current = null;
+    if (path) toast(`截图已保存：${path}`);
+  };
+
+  const startScreenshot = async () => {
+    setMenu(false);
+    setTool(null);
+    if (!tauriOk) {
+      toast("截图功能仅在 WinPet 桌面版可用");
+      return;
+    }
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const current = getCurrentWindow();
+      windowSnapshotRef.current = {
+        position: await current.outerPosition(),
+        size: await current.outerSize(),
+        resizable: await current.isResizable(),
+      };
+      const capture = await invokeNative("prepare_screenshot");
+      await current.setResizable(false);
+      await current.setPosition({ type: "Physical", x: capture.left, y: capture.top });
+      await current.setSize({ type: "Physical", width: capture.width, height: capture.height });
+      setScreenshot(capture);
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      await current.show();
+      await current.setFocus();
+    } catch (err) {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().show();
+      } catch {}
+      await restorePetWindow();
+      toast(`截图启动失败：${String(err)}`);
+    }
+  };
+
+  const cancelScreenshot = async () => {
+    if (screenshot?.path) {
+      try { await invokeNative("discard_screenshot_capture", { path: screenshot.path }); } catch {}
+    }
+    await restorePetWindow();
   };
 
   const onPointerDown = (e) => {
@@ -267,6 +322,16 @@ export default function App() {
 
   useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
 
+  if (screenshot) {
+    return (
+      <ScreenshotEditor
+        capture={screenshot}
+        onCancel={cancelScreenshot}
+        onFinish={restorePetWindow}
+      />
+    );
+  }
+
   return (
     <div
       className="pet-root"
@@ -294,7 +359,7 @@ export default function App() {
           <div className="menu-separator" />
           <button onClick={() => openTool("launcher")}>启动程序 / CMD</button>
           <button onClick={() => openTool("clipboard")}>文本剪贴板</button>
-          <button onClick={takeScreenshot}>截图</button>
+          <button onClick={startScreenshot}>截图与标注</button>
           <div className="menu-separator" />
           <button onClick={closeWindow}>隐藏到后台</button>
           <button className="danger" onClick={async () => {

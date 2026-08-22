@@ -1,13 +1,18 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Networks, System};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::webview::WebviewWindowBuilder;
+use tauri::{AppHandle, Manager, WebviewUrl, WindowEvent};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -27,6 +32,15 @@ struct Stats {
     mem: f32,
     disk: f32,
     net: f32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct ScreenshotCapture {
+    path: String,
+    left: i32,
+    top: i32,
+    width: u32,
+    height: u32,
 }
 
 struct Monitor {
@@ -96,6 +110,12 @@ impl Monitor {
 #[derive(Default)]
 struct QuitFlag(AtomicBool);
 
+#[derive(Default)]
+struct PinStore {
+    next: AtomicU64,
+    paths: Mutex<HashMap<String, String>>,
+}
+
 fn clean_path(value: &str) -> String {
     value.trim().trim_matches('"').trim().to_string()
 }
@@ -113,6 +133,46 @@ fn powershell(script: &str) -> Command {
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
     command
+}
+
+fn timestamp_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn temp_capture_root() -> PathBuf {
+    std::env::temp_dir().join("WinPet")
+}
+
+fn remove_temp_capture(path: &str) {
+    let root = temp_capture_root();
+    let _ = fs::create_dir_all(&root);
+    let Ok(root) = root.canonicalize() else { return };
+    let Ok(candidate) = PathBuf::from(path).canonicalize() else { return };
+    if candidate.starts_with(root) {
+        let _ = fs::remove_file(candidate);
+    }
+}
+
+fn validate_saved_screenshot(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+    let root = app
+        .path()
+        .picture_dir()
+        .map_err(|err| format!("无法定位图片目录: {err}"))?
+        .join("WinPet");
+    fs::create_dir_all(&root).map_err(|err| format!("无法创建截图目录: {err}"))?;
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("无法校验截图目录: {err}"))?;
+    let candidate = PathBuf::from(path)
+        .canonicalize()
+        .map_err(|err| format!("截图文件不存在: {err}"))?;
+    if !candidate.starts_with(root) {
+        return Err("只能钉住 WinPet 自己保存的截图".into());
+    }
+    Ok(candidate)
 }
 
 #[tauri::command]
@@ -235,38 +295,137 @@ fn set_clipboard(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn take_screenshot() -> Result<String, String> {
+fn prepare_screenshot(app: tauri::AppHandle) -> Result<ScreenshotCapture, String> {
+    if let Some(window) = app.get_webview_window("pet") {
+        window.hide().map_err(|err| format!("隐藏宠物窗口失败: {err}"))?;
+    }
+    thread::sleep(Duration::from_millis(120));
+
     let script = r#"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$dir = Join-Path ([IO.Path]::GetTempPath()) 'WinPet'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$path = Join-Path $dir ('capture-' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + '.png')
 $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 try {
   $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-  $root = [Environment]::GetFolderPath('MyPictures')
-  $dir = Join-Path $root 'WinPet'
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  $path = Join-Path $dir ('winpet-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.png')
   $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-  Write-Output $path
+  [pscustomobject]@{
+    path = $path
+    left = $bounds.Left
+    top = $bounds.Top
+    width = $bounds.Width
+    height = $bounds.Height
+  } | ConvertTo-Json -Compress
 } finally {
   $graphics.Dispose()
   $bitmap.Dispose()
 }
 "#;
-    let output = powershell(script)
-        .output()
-        .map_err(|err| format!("截图失败: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+
+    let result = (|| {
+        let output = powershell(script)
+            .output()
+            .map_err(|err| format!("截图失败: {err}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        let json = String::from_utf8_lossy(&output.stdout);
+        serde_json::from_str::<ScreenshotCapture>(json.trim())
+            .map_err(|err| format!("截图信息解析失败: {err}"))
+    })();
+
+    if result.is_err() {
+        if let Some(window) = app.get_webview_window("pet") {
+            let _ = window.show();
+        }
     }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        Err("截图失败：未返回保存路径".into())
-    } else {
-        Ok(path)
+    result
+}
+
+#[tauri::command]
+fn discard_screenshot_capture(path: String) {
+    remove_temp_capture(&path);
+}
+
+#[tauri::command]
+fn save_screenshot_png(
+    app: tauri::AppHandle,
+    data_base64: String,
+    source_path: String,
+) -> Result<String, String> {
+    let bytes = BASE64
+        .decode(data_base64.as_bytes())
+        .map_err(|err| format!("截图数据无效: {err}"))?;
+    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err("截图数据不是有效 PNG".into());
     }
+
+    let dir = app
+        .path()
+        .picture_dir()
+        .map_err(|err| format!("无法定位图片目录: {err}"))?
+        .join("WinPet");
+    fs::create_dir_all(&dir).map_err(|err| format!("无法创建截图目录: {err}"))?;
+    let path = dir.join(format!("winpet-{}.png", timestamp_millis()));
+    fs::write(&path, bytes).map_err(|err| format!("保存截图失败: {err}"))?;
+    remove_temp_capture(&source_path);
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn pin_screenshot(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PinStore>,
+    path: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let path = validate_saved_screenshot(&app, &path)?;
+    let id = state.next.fetch_add(1, Ordering::SeqCst) + 1;
+    let label = format!("pin-{id}");
+    state
+        .paths
+        .lock()
+        .map_err(|_| "钉图状态已损坏".to_string())?
+        .insert(label.clone(), path.to_string_lossy().to_string());
+
+    let mut w = width.max(80.0);
+    let mut h = height.max(60.0);
+    let scale = (1200.0 / w).min(800.0 / h).min(1.0);
+    w *= scale;
+    h *= scale;
+
+    if let Err(err) = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+        .title("WinPet Pin")
+        .inner_size(w, h)
+        .decorations(false)
+        .always_on_top(true)
+        .resizable(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .build()
+    {
+        if let Ok(mut paths) = state.paths.lock() {
+            paths.remove(&label);
+        }
+        return Err(format!("创建钉图窗口失败: {err}"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_pin_path(state: tauri::State<'_, PinStore>, label: String) -> Result<String, String> {
+    state
+        .paths
+        .lock()
+        .map_err(|_| "钉图状态已损坏".to_string())?
+        .get(&label)
+        .cloned()
+        .ok_or_else(|| "找不到钉图内容".to_string())
 }
 
 #[tauri::command]
@@ -287,6 +446,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(Monitor::new()))
         .manage(QuitFlag::default())
+        .manage(PinStore::default())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
@@ -346,7 +506,11 @@ pub fn run() {
             clipboard_sequence,
             get_clipboard,
             set_clipboard,
-            take_screenshot,
+            prepare_screenshot,
+            discard_screenshot_capture,
+            save_screenshot_png,
+            pin_screenshot,
+            get_pin_path,
             quit_app
         ])
         .run(tauri::generate_context!())

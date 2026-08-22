@@ -24,7 +24,8 @@
 - 🖱️ **轻量交互**：支持拖动、双击改名、右键菜单、托盘常驻
 - 🚀 **快捷启动**：可保存一个 EXE 路径，也可保存并运行 CMD 命令或 `.cmd/.bat` 脚本
 - 📋 **文本剪贴板历史**：自动记录最近 50 条纯文本，点击任意历史项即可重新复制
-- 📸 **一键截图**：捕获 Windows 虚拟桌面并保存到“图片/WinPet”目录
+- 📸 **区域截图与标注**：框选任意区域，支持画笔、矩形、椭圆、箭头、文字、撤销和重选
+- 📌 **无边框钉图**：截图可直接保存并钉在桌面最前方，拖动移动、右键关闭
 - 🪟 **透明置顶窗口**：不挡视线，随时可用
 - 📦 **双模式发布**：Portable 免安装版 + 正式安装包
 
@@ -48,9 +49,11 @@
 
 - **启动程序 / CMD**：填写 EXE 完整路径即可启动；CMD 输入支持普通命令，也支持 `.cmd/.bat` 文件路径。配置会保存在本机，下次启动继续使用。
 - **文本剪贴板**：自动监听 Windows 剪贴板变化，仅当内容是纯文本时加入历史；最多保留 50 条，重复内容自动去重，点击任意一条即可重新复制。图片、文件和 HTML 不会进入历史。
-- **截图**：捕获当前 Windows 虚拟桌面（包含多显示器区域），PNG 默认保存在系统“图片/WinPet”目录。
+- **截图与标注**：WinPet 会先隐藏宠物自身，再抓取 Windows 虚拟桌面作为底图；拖动选择区域后进入标注模式，可使用画笔、矩形、椭圆、箭头和文字，支持撤销与重新框选。
+- **保存 / 保存并钉住**：确认后立即生成 PNG 文件并返回本机路径，默认保存到系统“图片/WinPet”目录；选择“保存并钉住”会同时创建独立的无边框、始终置顶截图窗口。
+- **钉图交互**：按住钉图可拖动位置，右键即可关闭；钉图窗口不占任务栏。
 
-> EXE/CMD 能力只会执行你主动填写的本机路径或命令。开源版本不会内置、下载或静默执行任何外部程序。剪贴板历史仅保存在本机。
+> EXE/CMD 能力只会执行你主动填写的本机路径或命令。开源版本不会内置、下载或静默执行任何外部程序。剪贴板历史仅保存在本机。截图 WebView 只允许读取 WinPet 自己的临时截图目录和最终截图目录。
 
 ---
 
@@ -74,7 +77,7 @@
 - Node.js ≥ 20
 - Rust stable（通过 `rustup` 安装）
 - WebView2（Windows 11 自带，Windows 10 需安装）
-- Windows PowerShell 5.1+（剪贴板与截图功能使用系统 PowerShell 能力）
+- Windows PowerShell 5.1+（剪贴板与屏幕底图抓取使用系统 PowerShell 能力）
 
 ### 快速开始
 
@@ -96,6 +99,8 @@ npm run tauri:dev
 npm run tauri:build  # 产物在 src-tauri/target/release/bundle/
 ```
 
+GitHub Actions 的 `Build Windows` 工作流只支持手动 `workflow_dispatch`，普通 push 不会自动消耗云端构建额度。
+
 ---
 
 ## 🏗️ 架构说明
@@ -106,20 +111,24 @@ flowchart TD
   B -- name / expression --> C[Blobatar 渲染层]
   C --> D[透明桌面窗口]
   B <--> E[系统托盘]
-  A --> F[EXE / CMD / Clipboard / Screenshot]
+  A --> F[EXE / CMD / Clipboard]
+  A --> G[Screen Capture / PNG Save / Pin Window]
+  G --> H[React Canvas Screenshot Editor]
 ```
 
-- **后端**（Rust / Tauri）：负责系统采样、窗口与托盘，以及 EXE/CMD、纯文本剪贴板、截图等 Windows 原生能力
-- **前端**（React）：负责业务逻辑、交互、文本剪贴板历史和表情映射
+- **后端**（Rust / Tauri）：负责系统采样、窗口与托盘，以及 EXE/CMD、纯文本剪贴板、屏幕底图抓取、PNG 落盘和钉图窗口
+- **前端**（React）：负责业务逻辑、交互、文本剪贴板历史、截图区域选择和 Canvas 标注
 - **Blobatar**：只负责视觉与动画渲染
 
 ### 核心文件
 
 | 路径 | 职责 |
 |------|------|
-| `src/App.jsx` | 主组件：状态管理、表情映射、拖动、菜单、改名与桌面工具 UI |
-| `src-tauri/src/lib.rs` | 系统监控采样、托盘 / 窗口事件、EXE/CMD、纯文本剪贴板与截图命令 |
-| `src-tauri/tauri.conf.json` | 窗口配置（透明、置顶、尺寸等） |
+| `src/App.jsx` | 主组件：状态管理、表情映射、拖动、菜单、工具入口与截图模式切换 |
+| `src/ScreenshotEditor.jsx` | 区域框选、画笔/规则图形/文字标注、保存、钉图视图 |
+| `src/ScreenshotEditor.css` | 截图编辑器与无边框钉图样式 |
+| `src-tauri/src/lib.rs` | 系统监控、托盘/窗口事件、EXE/CMD、剪贴板、截图落盘与钉图窗口 |
+| `src-tauri/tauri.conf.json` | 主窗口和截图 asset protocol 安全范围 |
 
 ---
 
@@ -128,7 +137,7 @@ flowchart TD
 | 层级 | 技术 |
 |------|------|
 | 后端 | Tauri 2.11 / Rust / sysinfo / Windows PowerShell |
-| 前端 | React 19 / Vite 8 / @tauri-apps/api |
+| 前端 | React 19 / Vite 8 / Canvas / @tauri-apps/api |
 | 角色视觉 | blobatar 2.2.0 / @blobatar/react 2.2.0 |
 | 工具 | oxlint / @tauri-apps/cli |
 
@@ -140,6 +149,8 @@ flowchart TD
 winpet-blobatar/
 ├─ src/                 # React 前端
 │  ├─ App.jsx           # 主组件
+│  ├─ ScreenshotEditor.jsx
+│  ├─ ScreenshotEditor.css
 │  ├─ main.jsx
 │  └─ assets/
 ├─ src-tauri/           # Tauri / Rust 后端
@@ -158,6 +169,8 @@ winpet-blobatar/
 角色生成与表情体系来自 **[Alain00/blobatar](https://github.com/Alain00/blobatar)**（MIT License）。感谢上游开放高质量的确定性几何头像实现。
 
 本项目通过 npm 依赖方式引用 `blobatar@2.2.0` 与 `@blobatar/react@2.2.0`，未修改上游源码。
+
+截图功能借鉴常见 Snip & Pin 产品交互思路，相关区域选择、标注、保存与钉图代码均为 WinPet 自有实现，没有复制 GPL 项目源码。
 
 ---
 

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables pet window + sysinfo commands",
-  "windows": ["pet"],
+  "description": "enables WinPet pet, screenshot editor and pin windows",
+  "windows": ["pet", "pin-*"],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -10,6 +10,10 @@
     "core:window:allow-hide",
     "core:window:allow-close",
     "core:window:allow-minimize",
-    "core:window:allow-set-focus"
+    "core:window:allow-set-focus",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-set-resizable",
+    "core:window:allow-start-dragging"
   ]
 }
