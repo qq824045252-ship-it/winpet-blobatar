@@ -247,8 +247,8 @@ export default function App() {
                 <span>程序</span><span className="menu-arrow">{programOpen ? "▸" : "▸"}</span>
               </button>
             </div>
-            <button onClick={() => openTool("clipboard")}>文本剪贴板 <span style={{opacity:0.6, fontSize:"10px"}}>Alt+C</span></button>
-            <button onClick={startScreenshot}>截图与标注</button>
+            <button onClick={() => openTool("clipboard")}>剪切板 <span style={{opacity:0.6, fontSize:"10px"}}>Alt+C</span></button>
+            <button onClick={startScreenshot}>截图</button>
             <div className="menu-separator" />
             <button onClick={closeWindow}>隐藏到后台</button>
             <button className="danger" onClick={async () => { setMenu(false); try { await invokeNative("quit_app"); } catch {} }}>退出</button>
@@ -322,7 +322,7 @@ export default function App() {
       )}
       {tool === "clipboard" && (
         <div className="tool-panel clipboard-panel" onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .clipboard-item")) return; import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}>
-          <div className="tool-header" onPointerDown={(e) => { if (e.target.closest("button")) return; e.stopPropagation(); import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}><strong>文本剪贴板 · {clipboardHistory.length}</strong><button onClick={() => setTool(null)}>×</button></div>
+          <div className="tool-header" onPointerDown={(e) => { if (e.target.closest("button")) return; e.stopPropagation(); import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}><strong>剪切板 · {clipboardHistory.length}</strong><button onClick={() => setTool(null)}>×</button></div>
           <div className="clipboard-list">
             {clipboardHistory.length === 0 ? <div className="clipboard-empty">复制文字后会自动出现在这里</div> : clipboardHistory.map((item) => (
               <button className="clipboard-item" key={item.id} onClick={() => copyClipboardItem(item.text)}><span className="clipboard-preview">{item.text.replace(/\s+/g, " ").trim()}</span><span className="clipboard-time">{formatClipboardTime(item.capturedAt)}</span></button>

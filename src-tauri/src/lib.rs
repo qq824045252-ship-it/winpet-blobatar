@@ -461,7 +461,9 @@ fn save_screenshot_png(
 }
 
 #[tauri::command]
-fn pin_screenshot_png(
+// async 必须：同步命令在主线程上创建窗口会在 WebView2 初始化时阻塞主线程，
+// 导致本命令的 invoke 响应以及后续所有 IPC（Esc 取消、钉图拖动/关闭）全部卡死。
+async fn pin_screenshot_png(
     app: tauri::AppHandle,
     state: tauri::State<'_, PinStore>,
     data_base64: String,
