@@ -235,19 +235,35 @@ fn launch_exe(path: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("请输入 EXE 路径".into());
     }
-    let target = Path::new(&path);
-    if !target.is_file() {
-        return Err("文件不存在".into());
+    let mut actual = PathBuf::from(&path);
+    if !actual.is_file() {
+        let with_lnk = PathBuf::from(format!("{}.lnk", path));
+        if with_lnk.is_file() {
+            actual = with_lnk;
+        } else {
+            return Err("文件不存在".into());
+        }
     }
-    let is_exe = target
+    let ext = actual
         .extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("exe"))
-        .unwrap_or(false);
-    if !is_exe {
-        return Err("请选择 .exe 文件".into());
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext != "exe" && ext != "lnk" {
+        return Err("请选择 .exe 或 .lnk 快捷方式".into());
     }
-    Command::new(target)
+    if ext == "lnk" {
+        // .lnk 需通过 shell 启动，不能直接 CreateProcess
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "start", "", &actual.to_string_lossy().to_string()]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        return cmd
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| format!("启动失败: {err}"));
+    }
+    Command::new(actual)
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("启动失败: {err}"))
@@ -261,15 +277,30 @@ fn run_cmd(command: String) -> Result<(), String> {
     }
 
     let candidate = clean_path(&command);
-    let command_line = if Path::new(&candidate).is_file() {
-        let ext = Path::new(&candidate)
+    // 兼容不带 .lnk 后缀的快捷方式输入
+    let candidate_path = if Path::new(&candidate).is_file() {
+        PathBuf::from(&candidate)
+    } else {
+        let with_lnk = PathBuf::from(format!("{}.lnk", candidate));
+        if with_lnk.is_file() { with_lnk } else { PathBuf::from(&candidate) }
+    };
+    let command_line = if candidate_path.is_file() {
+        let ext = candidate_path
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or_default();
-        if !ext.eq_ignore_ascii_case("cmd") && !ext.eq_ignore_ascii_case("bat") {
-            return Err("脚本文件仅支持 .cmd 或 .bat".into());
+        if ext.eq_ignore_ascii_case("lnk") {
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", "start", "", &candidate_path.to_string_lossy().to_string()]);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd.spawn().map(|_| ()).map_err(|err| format!("启动失败: {err}"))?;
+            return Ok(());
         }
-        format!("call \"{}\"", candidate.replace('"', "\"\""))
+        if !ext.eq_ignore_ascii_case("cmd") && !ext.eq_ignore_ascii_case("bat") {
+            return Err("脚本文件仅支持 .cmd / .bat / .lnk".into());
+        }
+        format!("call \"{}\"", candidate_path.to_string_lossy().replace('"', "\"\""))
     } else {
         command
     };
@@ -520,7 +551,7 @@ pub fn run() {
                         if let Some(path) = paths.remove(window.label()) {
                             remove_temp_capture(&path);
                         }
-                    }
+                    };
                 }
             }
         })

@@ -24,10 +24,10 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 2px;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  padding-top: 36px;
+  padding-bottom: 2px;
   cursor: default;
   touch-action: none;
 }
@@ -81,11 +81,90 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 }
 
 .menu {
-  top: 8px;
-  right: 8px;
+  top: auto;
+  bottom: 88px;
+  right: 10px;
+  width: auto;
+  min-width: 150px;
+  height: auto;
+  max-height: 280px;
   display: flex;
   flex-direction: column;
   padding: 5px;
+  overflow: visible;
+  border-radius: 12px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+}
+.menu-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.submenu-flyout {
+  position: absolute;
+  top: -6px;
+  right: 100%;
+  width: 170px;
+  height: auto;
+  max-height: calc(100vh - 40px);
+  background: rgba(18, 20, 26, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
+  animation: submenuIn 120ms ease-out;
+  z-index: 30;
+}
+/* 桥接间隙，防止鼠标移动时消失 */
+.menu-group::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 100%;
+  width: 12px;
+  height: 100%;
+  display: none;
+}
+.menu-group:hover::after { display: block; }
+.submenu-flyout::-webkit-scrollbar { width: 4px; }
+.submenu-flyout::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 999px; }
+@keyframes submenuIn { from { opacity: 0; transform: translateX(6px);} to { opacity:1; transform: translateX(0);} }
+.submenu-title {
+  font-size: 10px;
+  color: #8f9ab1;
+  letter-spacing: 0.4px;
+  padding: 2px 8px 4px;
+  font-weight: 700;
+}
+.submenu-sep { height:1px; margin:4px 6px; background: rgba(255,255,255,0.07); }
+.submenu-row { display:flex; align-items:center; gap:4px; }
+.submenu-row .submenu-item { flex:1; min-width:0; }
+.submenu-del {
+  width:22px; height:22px; padding:0 !important; flex-shrink:0;
+  background: transparent !important; border-color: transparent !important;
+  color:#6b7588 !important; font-size:14px !important; line-height:1;
+}
+.submenu-del:hover { color:#ff7a7a !important; background: rgba(255,122,122,0.12) !important; }
+.submenu-empty { padding:8px; font-size:10px; color:#6b7588; text-align:center; }
+.submenu-add {
+  margin-top:4px;
+  background: rgba(122,162,255,0.12) !important;
+  border-color: rgba(122,162,255,0.22) !important;
+  color:#a9bfff !important;
+  font-size:11px !important;
+}
+.submenu-add:hover { background: rgba(122,162,255,0.18) !important; }
+.submenu-first {
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  font-weight: 600;
 }
 .menu button,
 .rename button,
@@ -103,6 +182,8 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   border-radius: 7px;
   white-space: nowrap;
 }
+.menu::-webkit-scrollbar { width: 4px; }
+.menu::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 999px; }
 .menu button:hover { background: rgba(122, 162, 255, 0.15); }
 .menu button.danger { color: #ff7a7a; }
 .menu button.danger:hover { background: rgba(255, 122, 122, 0.15); }
@@ -110,6 +191,40 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   height: 1px;
   margin: 3px 5px;
   background: rgba(255, 255, 255, 0.09);
+}
+
+.menu-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.menu-parent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.menu-arrow {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-left: 12px;
+}
+.submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 2px 10px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.09);
+}
+.submenu-item {
+  font-size: 11px !important;
+  padding: 5px 10px !important;
+  opacity: 0.92;
+  text-align: left;
+}
+.submenu-item:hover {
+  background: rgba(122, 162, 255, 0.18) !important;
 }
 
 .rename {
@@ -157,6 +272,18 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   color: #dfe6f5;
   user-select: text;
 }
+.program-panel {
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+  width: 280px;
+  max-width: calc(100% - 20px);
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+}
 .tool-header {
   display: flex;
   align-items: center;
@@ -197,6 +324,25 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   justify-content: flex-end;
   gap: 5px;
 }
+.tool-switch {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: #8f9ab1 !important;
+  font-size: 10px !important;
+}
+.tool-switch:hover {
+  color: #dfe6f5 !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+.program-panel .program-desc { font-size:10px; color:#8f9ab1; line-height:1.4; margin-bottom:2px; }
+.program-list { display:flex; flex-direction:column; gap:6px; margin-top:6px; overflow-y:auto; flex:1; min-height:0; }
+.program-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:8px; }
+.program-meta { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.program-name { font-size:11px; color:#e6ebf5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.program-cmd { font-size:9px; color:#7a8599; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px; }
+.program-acts { display:flex; gap:4px; flex-shrink:0; }
+.program-acts button { font-size:10px !important; padding:4px 7px !important; }
+.program-acts button.danger { color:#ff9a9a !important; border-color: rgba(255,122,122,0.25) !important; }
 
 .clipboard-list {
   display: flex;
@@ -255,7 +401,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   position: absolute;
   left: 8px;
   right: 8px;
-  bottom: 7px;
+  top: 8px;
   z-index: 40;
   padding: 6px 8px;
   overflow: hidden;

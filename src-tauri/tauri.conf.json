@@ -14,10 +14,10 @@
       {
         "title": "WinPet",
         "label": "pet",
-        "width": 230,
-        "height": 170,
-        "minWidth": 200,
-        "minHeight": 150,
+        "width": 360,
+        "height": 380,
+        "minWidth": 320,
+        "minHeight": 340,
         "resizable": true,
         "fullscreen": false,
         "transparent": true,
@@ -40,8 +40,8 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": ["nsis"],
+    "active": false,
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
