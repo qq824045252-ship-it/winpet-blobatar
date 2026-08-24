@@ -4,6 +4,7 @@ import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import "./ScreenshotEditor.css";
 
 const TOOLS = [
+  ["select", "选择/移动"],
   ["pen", "画笔"],
   ["rect", "矩形"],
   ["ellipse", "椭圆"],
@@ -17,6 +18,12 @@ const ICONS = {
   reselect: (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
       <rect x="4" y="4" width="16" height="16" rx="1.5" strokeDasharray="4 3" />
+    </svg>
+  ),
+  select: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
+      <path d="M13 13l6 6" />
     </svg>
   ),
   pen: (
@@ -75,6 +82,71 @@ function canvasPoint(canvas, event) {
   };
 }
 
+let _measureCtx = null;
+function measureTextWidth(text) {
+  if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
+  _measureCtx.font = "600 28px 'Segoe UI', sans-serif";
+  return _measureCtx.measureText(text).width;
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+// 命中检测：判断点是否落在标注图形上（选择/移动工具用）
+function hitTest(item, x, y) {
+  const pad = 8;
+  if (item.type === "text") {
+    const w = measureTextWidth(item.text);
+    return x >= item.x - pad && x <= item.x + w + pad && y >= item.y - pad && y <= item.y + 34 + pad;
+  }
+  if (item.type === "pen") {
+    return item.points.some((p) => Math.hypot(p.x - x, p.y - y) <= 12);
+  }
+  const r = normalizeRect({ x: item.x1, y: item.y1 }, { x: item.x2, y: item.y2 });
+  if (item.type === "rect" || item.type === "ellipse") {
+    return x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad;
+  }
+  if (item.type === "arrow") {
+    return distToSegment(x, y, item.x1, item.y1, item.x2, item.y2) <= 14;
+  }
+  return false;
+}
+
+// 平移标注图形（选择/移动工具用）
+function translateAnnotation(item, dx, dy) {
+  if (item.type === "pen") {
+    return { ...item, points: item.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) };
+  }
+  if (item.type === "text") {
+    return { ...item, x: item.x + dx, y: item.y + dy };
+  }
+  return { ...item, x1: item.x1 + dx, y1: item.y1 + dy, x2: item.x2 + dx, y2: item.y2 + dy };
+}
+
+// 标注图形的包围盒（选中高亮用）
+function annotationBounds(item) {
+  if (item.type === "pen") {
+    const xs = item.points.map((p) => p.x);
+    const ys = item.points.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+  if (item.type === "text") {
+    return { x: item.x, y: item.y, w: measureTextWidth(item.text), h: 34 };
+  }
+  return normalizeRect({ x: item.x1, y: item.y1 }, { x: item.x2, y: item.y2 });
+}
+
 function drawArrow(ctx, item) {
   const { x1, y1, x2, y2 } = item;
   const angle = Math.atan2(y2 - y1, x2 - x1);
@@ -98,7 +170,6 @@ function drawAnnotation(ctx, item) {
   ctx.lineJoin = "round";
   if (item.type === "pen") {
     if (item.points.length === 1) {
-      // 单击画一个点（round 线帽画零长线也生效，但这里显式画圆更稳）
       ctx.beginPath();
       ctx.arc(item.points[0].x, item.points[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
       ctx.fill();
@@ -119,7 +190,6 @@ function drawAnnotation(ctx, item) {
   } else if (item.type === "arrow") {
     drawArrow(ctx, item);
   } else if (item.type === "text") {
-    // 带描边的彩色文字，保证任何背景下都清晰（微信风格）
     ctx.font = "600 28px 'Segoe UI', sans-serif";
     ctx.textBaseline = "top";
     ctx.lineWidth = 4;
@@ -139,19 +209,25 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
   const imageRef = useRef(null);
   const startRef = useRef(null);
   const activeRef = useRef(null);
+  const movingRef = useRef(null);
   const textDraftRef = useRef(null);
+  const textInputRef = useRef(null);
   const finishRef = useRef(null);
+  const hoverWindowRef = useRef(null);
+  const hoverCheckRef = useRef({ x: -1e9, y: -1e9, t: 0 });
 
   const [loaded, setLoaded] = useState(false);
   const [stage, setStage] = useState("select");
   const [selection, setSelection] = useState(null);
   const [dragSelection, setDragSelection] = useState(null);
-  const [tool, setTool] = useState("pen");
+  const [tool, setTool] = useState("select");
   const [annotations, setAnnotations] = useState([]);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [textDraft, setTextDraft] = useState(null); // {x, y, value} 物理像素
+  const [hoverWindow, setHoverWindow] = useState(null); // 选区阶段悬停高亮的窗口（capture 坐标）
+  const [selectedIndex, setSelectedIndex] = useState(null); // 编辑阶段选中的标注下标
   // DPR：canvas 位图像素 / CSS 像素，用于把 DOM 定位换算成 CSS 像素
   const [dpr, setDpr] = useState(() => (typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1));
 
@@ -187,7 +263,7 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     })();
   }, [capture]);
 
-  // 选区阶段：全屏遮罩 + 亮区 + 微信风格边框
+  // 选区阶段：全屏遮罩 + 亮区 + 微信风格边框 + 悬停窗口高亮
   useEffect(() => {
     if (!loaded || stage !== "select") return;
     const canvas = selectCanvasRef.current;
@@ -214,7 +290,17 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
       ctx.lineWidth = 2;
       ctx.strokeRect(rx, ry, rw, rh);
     }
-  }, [loaded, stage, selection, dragSelection]);
+    // 悬停窗口高亮（拖动选择时隐藏）
+    if (hoverWindow && !(dragSelection && dragSelection.w >= MIN_SELECT)) {
+      const r = hoverWindow;
+      ctx.strokeStyle = "rgba(255,255,255,.72)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(r.x + 0.5, r.y + 0.5, Math.max(0, r.w - 1), Math.max(0, r.h - 1));
+      ctx.strokeStyle = "rgba(90,170,255,.35)";
+      ctx.lineWidth = 6;
+      ctx.strokeRect(r.x + 3, r.y + 3, Math.max(0, r.w - 6), Math.max(0, r.h - 6));
+    }
+  }, [loaded, stage, selection, dragSelection, hoverWindow]);
 
   // 编辑阶段：选区外的暗色背景
   useEffect(() => {
@@ -253,7 +339,20 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     );
     annotations.forEach((item) => drawAnnotation(ctx, item));
     if (draft) drawAnnotation(ctx, draft);
-  }, [loaded, stage, selection, annotations, draft]);
+    // 选中标注的虚线高亮框
+    if (selectedIndex != null) {
+      const sel = annotations[selectedIndex];
+      if (sel) {
+        const b = annotationBounds(sel);
+        ctx.save();
+        ctx.strokeStyle = "rgba(90,160,255,.9)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(b.x - 6, b.y - 6, Math.max(0, b.w + 12), Math.max(0, b.h + 12));
+        ctx.restore();
+      }
+    }
+  }, [loaded, stage, selection, annotations, draft, selectedIndex]);
 
   // 实测 DPR（canvas 位图像素 / 实际渲染 CSS 像素），用于 DOM 定位换算
   useEffect(() => {
@@ -278,12 +377,72 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     if (v) setAnnotations((items) => [...items, { type: "text", x: t.x, y: t.y, text: v }]);
   };
 
+  // 文字输入框聚焦：WebView2 里挂载后立即 focus 不可靠，多重尝试 + activeElement 校验
+  useEffect(() => {
+    if (!textDraft) return;
+    const tryFocus = () => {
+      const el = textInputRef.current;
+      if (el && document.activeElement !== el) el.focus({ preventScroll: true });
+    };
+    const raf = requestAnimationFrame(tryFocus);
+    const t1 = setTimeout(tryFocus, 0);
+    const t2 = setTimeout(tryFocus, 120);
+    const t3 = setTimeout(tryFocus, 400);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [textDraft]);
+
+  const clearHover = () => {
+    hoverWindowRef.current = null;
+    hoverCheckRef.current = { x: -1e9, y: -1e9, t: 0 };
+    setHoverWindow(null);
+  };
+
+  // 选区阶段：检测指针下方窗口（节流），用于悬停高亮 + 单击捕获
+  const checkWindowUnderPoint = async (event) => {
+    if (startRef.current) return;
+    const canvas = selectCanvasRef.current;
+    if (!canvas) return;
+    const point = canvasPoint(canvas, event);
+    const sx = Math.round(capture.left + point.x);
+    const sy = Math.round(capture.top + point.y);
+    const now = Date.now();
+    const last = hoverCheckRef.current;
+    if (Math.hypot(sx - last.x, sy - last.y) < 8 && now - last.t < 120) return;
+    hoverCheckRef.current = { x: sx, y: sy, t: now };
+    try {
+      const rect = await invoke("window_under_point", { x: sx, y: sy });
+      let next = null;
+      if (rect && rect.width >= MIN_SELECT && rect.height >= MIN_SELECT) {
+        next = {
+          x: rect.x - capture.left,
+          y: rect.y - capture.top,
+          w: rect.width,
+          h: rect.height,
+        };
+        const x2 = Math.min(capture.width, next.x + next.w);
+        const y2 = Math.min(capture.height, next.y + next.h);
+        next.x = Math.max(0, next.x);
+        next.y = Math.max(0, next.y);
+        next.w = Math.max(0, x2 - next.x);
+        next.h = Math.max(0, y2 - next.y);
+        if (next.w < MIN_SELECT || next.h < MIN_SELECT) next = null;
+      }
+      const prev = hoverWindowRef.current;
+      const changed = !prev || !next || prev.x !== next.x || prev.y !== next.y || prev.w !== next.w || prev.h !== next.h;
+      if (changed) {
+        hoverWindowRef.current = next;
+        setHoverWindow(next);
+      }
+    } catch {}
+  };
+
   const beginSelection = (event) => {
     if (!loaded || stage !== "select") return;
     const point = canvasPoint(selectCanvasRef.current, event);
     startRef.current = point;
     setSelection(null);
     setDragSelection({ x: point.x, y: point.y, w: 0, h: 0 });
+    clearHover();
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
@@ -293,18 +452,44 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     setDragSelection(normalizeRect(startRef.current, point));
   };
 
-  const endSelection = (event) => {
+  const endSelection = async (event) => {
     if (!startRef.current) return;
     const point = canvasPoint(selectCanvasRef.current, event);
     const box = normalizeRect(startRef.current, point);
     startRef.current = null;
     setDragSelection(null);
-    if (box.w < MIN_SELECT || box.h < MIN_SELECT) return;
-    setSelection(box);
-    setAnnotations([]);
-    setDraft(null);
-    setText(null);
-    setStage("edit");
+    const enterEdit = (r) => {
+      setSelection(r);
+      setAnnotations([]);
+      setDraft(null);
+      setText(null);
+      clearHover();
+      setStage("edit");
+    };
+    if (box.w < MIN_SELECT || box.h < MIN_SELECT) {
+      // 单击：尝试捕获点击处的窗口
+      try {
+        const sx = Math.round(capture.left + point.x);
+        const sy = Math.round(capture.top + point.y);
+        const rect = await invoke("window_under_point", { x: sx, y: sy });
+        if (rect && rect.width >= MIN_SELECT && rect.height >= MIN_SELECT) {
+          const r = {
+            x: Math.max(0, rect.x - capture.left),
+            y: Math.max(0, rect.y - capture.top),
+            w: rect.width,
+            h: rect.height,
+          };
+          r.w = Math.min(capture.width - r.x, r.w);
+          r.h = Math.min(capture.height - r.y, r.h);
+          if (r.w >= MIN_SELECT && r.h >= MIN_SELECT) {
+            enterEdit(r);
+            return;
+          }
+        }
+      } catch {}
+      return;
+    }
+    enterEdit(box);
   };
 
   const cancelSelection = () => {
@@ -315,6 +500,7 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
   const beginDraw = (event) => {
     if (saving || !selection) return;
     if (textDraftRef.current) commitText();
+    setSelectedIndex(null);
     const point = canvasPoint(editCanvasRef.current, event);
     if (tool === "text") {
       setText({ x: point.x, y: point.y, value: "" });
@@ -347,6 +533,35 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     setAnnotations((items) => [...items, item]);
   };
 
+  // 选择/移动工具
+  const beginSelect = (event) => {
+    if (saving || !selection) return;
+    const point = canvasPoint(editCanvasRef.current, event);
+    for (let i = annotations.length - 1; i >= 0; i--) {
+      if (hitTest(annotations[i], point.x, point.y)) {
+        movingRef.current = { index: i, startX: point.x, startY: point.y, orig: annotations[i] };
+        setSelectedIndex(i);
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        return;
+      }
+    }
+    setSelectedIndex(null);
+  };
+
+  const moveSelect = (event) => {
+    const m = movingRef.current;
+    if (!m) return;
+    const point = canvasPoint(editCanvasRef.current, event);
+    const dx = point.x - m.startX;
+    const dy = point.y - m.startY;
+    const moved = translateAnnotation(m.orig, dx, dy);
+    setAnnotations((items) => items.map((it, i) => (i === m.index ? moved : it)));
+  };
+
+  const endSelect = () => {
+    movingRef.current = null;
+  };
+
   const undo = () => setAnnotations((items) => items.slice(0, -1));
 
   const reselect = () => {
@@ -355,6 +570,7 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     setAnnotations([]);
     setDraft(null);
     setText(null);
+    setSelectedIndex(null);
     setError("");
   };
 
@@ -396,6 +612,10 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     const onKey = (event) => {
       const ctrl = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
+      // 文字输入激活时，把键盘焦点还给输入框（解决 WebView2 聚焦丢失）
+      if (textDraftRef.current && textInputRef.current && document.activeElement !== textInputRef.current) {
+        textInputRef.current.focus({ preventScroll: true });
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         if (textDraftRef.current) { setText(null); return; }
@@ -437,7 +657,7 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
           ref={selectCanvasRef}
           className="shot-canvas-fill"
           onPointerDown={beginSelection}
-          onPointerMove={moveSelection}
+          onPointerMove={(e) => { if (startRef.current) moveSelection(e); else checkWindowUnderPoint(e); }}
           onPointerUp={endSelection}
           onPointerCancel={cancelSelection}
         />
@@ -446,14 +666,14 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
             {Math.round(box.w)} × {Math.round(box.h)}
           </div>
         )}
-        <div className="shot-hint">拖动选择截图区域 · Esc 取消</div>
+        <div className="shot-hint">拖动选择区域 · 单击自动捕获窗口 · Esc 取消</div>
       </div>
     );
   }
 
   if (!selection) return <div className="shot-root shot-loading">正在准备截图…</div>;
 
-  const toolbarW = 400;
+  const toolbarW = 440;
   const toolbarH = 48;
   let tbX = selection.x + selection.w / 2;
   let tbY = selection.y + selection.h + 10;
@@ -467,37 +687,51 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     width: selection.w / dpr,
     height: selection.h / dpr,
   };
-  const textInputStyle = textDraft ? {
-    left: (selection.x + textDraft.x) / dpr,
-    top: (selection.y + textDraft.y) / dpr,
-  } : null;
+  // 文字输入框样式：常驻挂载，无输入时放到屏幕外并隐藏，避免 WebView2 挂载聚焦时序问题
+  const textInputStyle = {
+    left: textDraft ? (selection.x + textDraft.x) / dpr : -9999,
+    top: textDraft ? (selection.y + textDraft.y) / dpr : -9999,
+  };
 
   return (
     <div className="shot-root shot-edit-root">
       <canvas ref={bgCanvasRef} className="shot-canvas-fill shot-bg-canvas" />
       <canvas
         ref={editCanvasRef}
-        className="shot-edit-canvas"
+        className={`shot-edit-canvas ${tool === "select" ? "shot-cursor-select" : ""}`}
         style={editStyle}
-        onPointerDown={beginDraw}
-        onPointerMove={moveDraw}
-        onPointerUp={endDraw}
-        onPointerCancel={endDraw}
+        onPointerDown={tool === "select" ? beginSelect : beginDraw}
+        onPointerMove={tool === "select" ? moveSelect : moveDraw}
+        onPointerUp={tool === "select" ? endSelect : endDraw}
+        onPointerCancel={tool === "select" ? endSelect : endDraw}
+      />
+      <input
+        ref={textInputRef}
+        className={`shot-text-input ${textDraft ? "" : "shot-text-input-hidden"}`}
+        style={textInputStyle}
+        value={textDraft?.value ?? ""}
+        onChange={(e) => { if (textDraftRef.current) setText({ ...textDraftRef.current, value: e.target.value }); }}
+        onKeyDown={(e) => {
+          // isComposing / keyCode 229：中文输入法确认候选词的 Enter 不算提交
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+            e.preventDefault();
+            commitText();
+          }
+          if (e.key === "Escape") setText(null);
+        }}
+        onBlur={() => { if (textDraftRef.current) commitText(); }}
+        onPointerDown={(e) => e.stopPropagation()}
       />
       {textDraft && (
-        <input
-          className="shot-text-input"
-          style={textInputStyle}
-          autoFocus
-          value={textDraft.value}
-          onChange={(e) => setText({ ...textDraftRef.current, value: e.target.value })}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitText();
-            if (e.key === "Escape") setText(null);
-          }}
-          onBlur={commitText}
+        <div
+          className="shot-text-actions"
+          style={{ left: textInputStyle.left, top: textInputStyle.top + 46 }}
           onPointerDown={(e) => e.stopPropagation()}
-        />
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <button className="shot-text-ok" onClick={commitText}>确定</button>
+          <button onClick={() => setText(null)}>取消</button>
+        </div>
       )}
       <div className="shot-toolbar" style={toolbarStyle} onPointerDown={commitText}>
         <button className="shot-tool-icon" title="重选" onClick={reselect}>{ICONS.reselect}</button>
@@ -532,6 +766,9 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
 
 export function PinView() {
   const [src, setSrc] = useState("");
+  const [menu, setMenu] = useState(null); // {x, y}
+  const [saved, setSaved] = useState("");
+  const savedTimerRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -543,10 +780,11 @@ export function PinView() {
     return () => { cancelled = true; };
   }, []);
 
-  const drag = async (event) => {
-    // 仅响应左键拖动，忽略右键/中键；用 pointer 事件即可（避免 mouse+pointer 双触发 startDragging）
+  const drag = (event) => {
+    // 仅左键拖动；点击按钮/菜单不触发
     if (event.button !== undefined && event.button !== 0) return;
-    try { await getCurrentWindow().startDragging(); } catch {}
+    if (event.target.closest && event.target.closest(".pin-actions, .pin-menu")) return;
+    getCurrentWindow().startDragging().catch(() => {});
   };
 
   const close = async (event) => {
@@ -554,17 +792,55 @@ export function PinView() {
     try { await getCurrentWindow().close(); } catch {}
   };
 
+  const save = async () => {
+    setMenu(null);
+    try {
+      const label = getCurrentWindow().label;
+      const path = await invoke("save_pin_png", { label });
+      setSaved(`已保存：${path}`);
+    } catch (err) {
+      setSaved(`保存失败：${String(err)}`);
+    }
+    clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setSaved(""), 5000);
+  };
+
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape") close(e);
+      if (e.key === "Escape") {
+        setMenu(null);
+        setSaved("");
+        close(e);
+      }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearTimeout(savedTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div className="pin-root" onPointerDown={drag} onContextMenu={close} onDoubleClick={close} title="拖动移动 · 右键/双击/ESC 关闭">
+    <div
+      className="pin-root"
+      onPointerDown={drag}
+      onDoubleClick={close}
+      onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
+      title="拖动移动 · 右键保存/关闭 · 双击/ESC 关闭"
+    >
       {src ? <img src={src} alt="Pinned screenshot" draggable="false" /> : <div className="pin-loading">加载中…</div>}
+      <div className="pin-actions">
+        <button onClick={save} title="保存到图片库">保存</button>
+        <button onClick={close} title="关闭">×</button>
+      </div>
+      {menu && (
+        <div className="pin-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(e) => e.stopPropagation()}>
+          <button onClick={save}>保存到图片库</button>
+          <button onClick={close}>关闭</button>
+        </div>
+      )}
+      {saved && <div className="pin-saved">{saved}</div>}
     </div>
   );
 }

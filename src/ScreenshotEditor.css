@@ -82,18 +82,57 @@
     0 0 0 4px rgba(255, 255, 255, 0.08);
 }
 
+.shot-edit-canvas.shot-cursor-select {
+  cursor: default;
+}
+
 /* 文字输入框（微信风格：透明底 + 虚线框） */
 .shot-text-input {
   position: absolute;
-  min-width: 60px;
+  min-width: 80px;
+  min-height: 36px;
   padding: 2px 6px;
-  background: transparent;
+  background: rgba(0, 0, 0, 0.35);
   border: 1px dashed rgba(255, 255, 255, 0.85);
   color: #ff4655;
   font: 600 28px 'Segoe UI', sans-serif;
   outline: none;
   caret-color: #ff4655;
   z-index: 6;
+}
+
+.shot-text-input-hidden {
+  visibility: hidden;
+}
+
+/* 文字输入辅助按钮（确定/取消） */
+.shot-text-actions {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  z-index: 6;
+}
+
+.shot-text-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(30, 34, 42, 0.92);
+  color: #eef3ff;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.shot-text-actions button:hover {
+  filter: brightness(1.15);
+}
+
+.shot-text-actions .shot-text-ok {
+  background: #2f6fed;
+  border-color: #2f6fed;
+  color: #fff;
 }
 
 /* 微信风格悬浮工具栏 */
@@ -219,6 +258,86 @@
 
 .pin-root:active {
   cursor: grabbing;
+}
+
+/* 钉图窗口：悬停显示的保存/关闭工具条 */
+.pin-actions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 5;
+}
+
+.pin-root:hover .pin-actions {
+  opacity: 1;
+}
+
+.pin-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(30, 34, 42, 0.9);
+  color: #eef3ff;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pin-actions button:hover {
+  background: rgba(52, 60, 76, 0.95);
+}
+
+/* 钉图右键菜单 */
+.pin-menu {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: rgba(30, 34, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.pin-menu button {
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #eef3ff;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pin-menu button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* 钉图保存路径提示 */
+.pin-saved {
+  position: absolute;
+  left: 50%;
+  bottom: 46px;
+  transform: translateX(-50%);
+  max-width: 90%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(20, 24, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #cdd6ea;
+  font-size: 11px;
+  word-break: break-all;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .pin-root img {

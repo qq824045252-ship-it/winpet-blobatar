@@ -23,6 +23,28 @@ extern "system" {
     fn GetClipboardSequenceNumber() -> u32;
 }
 
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct WinRect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+extern "system" {
+    fn GetWindow(hWnd: isize, uCmd: u32) -> isize;
+    fn IsWindowVisible(hWnd: isize) -> i32;
+    fn GetWindowRect(hWnd: isize, lpRect: *mut WinRect) -> i32;
+    fn GetClassNameW(hWnd: isize, lpClassName: *mut u16, nMaxCount: i32) -> i32;
+    fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
+}
+
+const GW_HWNDNEXT: u32 = 2;
+
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 
@@ -498,6 +520,92 @@ fn get_pin_path(state: tauri::State<'_, PinStore>, label: String) -> Result<Stri
 }
 
 #[tauri::command]
+fn save_pin_png(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PinStore>,
+    label: String,
+) -> Result<String, String> {
+    let path = state
+        .paths
+        .lock()
+        .map_err(|_| "钉图状态已损坏".to_string())?
+        .get(&label)
+        .cloned()
+        .ok_or_else(|| "找不到钉图内容".to_string())?;
+    let bytes = fs::read(&path).map_err(|err| format!("读取钉图失败: {err}"))?;
+    let dir = app
+        .path()
+        .picture_dir()
+        .map_err(|err| format!("无法定位图片目录: {err}"))?
+        .join("WinPet");
+    fs::create_dir_all(&dir).map_err(|err| format!("无法创建截图目录: {err}"))?;
+    let out = dir.join(format!("winpet-pin-{}.png", timestamp_millis()));
+    fs::write(&out, bytes).map_err(|err| format!("保存钉图失败: {err}"))?;
+    Ok(out.to_string_lossy().to_string())
+}
+
+#[derive(serde::Serialize)]
+struct WindowRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+// 返回指针 (x, y) 下方最顶层（非本应用、可见）窗口的屏幕矩形，用于截图选区阶段自动捕获窗口。
+// 从本应用编辑器窗口开始沿 Z 序向下找，命中即返回。
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn window_under_point(app: tauri::AppHandle, x: i32, y: i32) -> Option<WindowRect> {
+    let pet = app.get_webview_window("pet")?;
+    let hwnd = pet.hwnd().ok()?.0 as isize;
+    let mut cur = hwnd;
+    loop {
+        cur = unsafe { GetWindow(cur, GW_HWNDNEXT) };
+        if cur == 0 {
+            break;
+        }
+        if unsafe { IsWindowVisible(cur) } == 0 {
+            continue;
+        }
+        let mut pid: u32 = 0;
+        unsafe { GetWindowThreadProcessId(cur, &mut pid) };
+        if pid == std::process::id() {
+            continue;
+        }
+        let mut r = WinRect::default();
+        if unsafe { GetWindowRect(cur, &mut r) } == 0 {
+            continue;
+        }
+        if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+            // 跳过桌面与任务栏
+            let mut cls = [0u16; 64];
+            let n = unsafe { GetClassNameW(cur, cls.as_mut_ptr(), cls.len() as i32) };
+            let name = String::from_utf16_lossy(&cls[..n.max(0) as usize]);
+            if matches!(
+                name.as_str(),
+                "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+            ) {
+                continue;
+            }
+            return Some(WindowRect {
+                x: r.left,
+                y: r.top,
+                width: r.right - r.left,
+                height: r.bottom - r.top,
+            });
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn window_under_point(_app: tauri::AppHandle, _x: i32, _y: i32) -> Option<WindowRect> {
+    None
+}
+
+#[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.state::<QuitFlag>().0.store(true, Ordering::SeqCst);
     app.exit(0);
@@ -587,6 +695,8 @@ pub fn run() {
             save_screenshot_png,
             pin_screenshot_png,
             get_pin_path,
+            save_pin_png,
+            window_under_point,
             quit_app
         ])
         .run(tauri::generate_context!())
