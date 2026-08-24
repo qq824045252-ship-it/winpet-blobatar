@@ -203,6 +203,7 @@ fn create_pin_window(
         .title("WinPet Pin")
         .inner_size(w, h)
         .decorations(false)
+        .transparent(true)
         .always_on_top(true)
         .resizable(true)
         .skip_taskbar(true)

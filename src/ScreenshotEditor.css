@@ -47,18 +47,37 @@
 .shot-edit-root {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
+  padding: 12px;
+  background: rgba(11, 13, 18, 0.96);
+  gap: 12px;
+}
+
+.shot-canvas-wrap {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: transparent;
+  padding: 0;
+  border-radius: 6px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.45);
 }
 
 .shot-toolbar {
   flex: 0 0 auto;
-  min-height: 52px;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  background: rgba(13, 16, 23, 0.98);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(22, 26, 36, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  backdrop-filter: blur(12px);
+  white-space: nowrap;
 }
 
 .shot-toolbar button {
@@ -113,32 +132,15 @@
   flex: 1;
 }
 
-.shot-canvas-wrap {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  overflow: hidden;
-  background:
-    linear-gradient(45deg, #171b23 25%, transparent 25%),
-    linear-gradient(-45deg, #171b23 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #171b23 75%),
-    linear-gradient(-45deg, transparent 75%, #171b23 75%),
-    #10131a;
-  background-size: 18px 18px;
-  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
-}
-
 .shot-edit-canvas {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  max-width: 90vw;
+  max-height: 70vh;
   width: auto;
   height: auto;
-  box-shadow: 0 16px 48px rgba(0,0,0,.45);
   cursor: crosshair;
   touch-action: none;
+  border-radius: 6px;
 }
 
 .pin-root {
@@ -148,9 +150,10 @@
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: transparent;
+  background: rgba(0,0,0,0.01);
   cursor: grab;
   user-select: none;
+  -webkit-app-region: no-drag;
 }
 
 .pin-root:active {

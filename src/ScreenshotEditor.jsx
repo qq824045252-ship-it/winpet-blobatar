@@ -92,9 +92,19 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
 
   useEffect(() => {
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.onload = () => {
       imageRef.current = img;
       setLoaded(true);
+    };
+    img.onerror = () => {
+      // 回退：用 fetch + blob 避免 tainted canvas
+      fetch(src).then(r => r.blob()).then(blob => {
+        const url = URL.createObjectURL(blob);
+        const fallback = new Image();
+        fallback.onload = () => { imageRef.current = fallback; setLoaded(true); };
+        fallback.src = url;
+      }).catch(() => setLoaded(true));
     };
     img.src = src;
   }, [src]);
@@ -156,6 +166,50 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     annotations.forEach((item) => drawAnnotation(ctx, item));
     if (draft) drawAnnotation(ctx, draft);
   }, [loaded, stage, selection, annotations, draft]);
+
+  // 窗口自适应：编辑态下窗口为选取内容 + 下方工具栏（在窗口内、图片外，像微信），位置跟随选取
+  useEffect(() => {
+    if (stage !== "edit" || !selection) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const win = await getCurrentWindow();
+        const { currentMonitor } = await import("@tauri-apps/api/window");
+        const monitor = await currentMonitor();
+        const toolbarH = 56;
+        const pad = 24;
+        const targetW = Math.max(320, Math.round(selection.w + pad));
+        const targetH = Math.max(220, Math.round(selection.h + toolbarH + pad));
+        let x = Math.round(capture.left + selection.x - pad/2);
+        let y = Math.round(capture.top + selection.y - pad/2);
+        if (monitor) {
+          const sw = monitor.size.width;
+          const sh = monitor.size.height;
+          const mx = monitor.position.x;
+          const my = monitor.position.y;
+          if (x + targetW > mx + sw) x = mx + sw - targetW - 8;
+          if (y + targetH > my + sh) y = my + sh - targetH - 8;
+          if (x < mx) x = mx + 8;
+          if (y < my) y = my + 8;
+        }
+        if (cancelled) return;
+        await win.setPosition({ type: "Physical", x, y });
+        await win.setSize({ type: "Physical", width: targetW, height: targetH });
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [stage, selection, capture]);
+
+  useEffect(() => {
+    if (stage !== "select") return;
+    (async () => {
+      try {
+        const win = await getCurrentWindow();
+        await win.setPosition({ type: "Physical", x: capture.left, y: capture.top });
+        await win.setSize({ type: "Physical", width: capture.width, height: capture.height });
+      } catch {}
+    })();
+  }, [stage, capture]);
 
   const beginSelection = (event) => {
     if (!loaded) return;
@@ -266,6 +320,16 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
 
   return (
     <div className="shot-root shot-edit-root">
+      <div className="shot-canvas-wrap">
+        <canvas
+          ref={editCanvasRef}
+          className="shot-edit-canvas"
+          onPointerDown={beginDraw}
+          onPointerMove={moveDraw}
+          onPointerUp={endDraw}
+          onPointerCancel={endDraw}
+        />
+      </div>
       <div className="shot-toolbar">
         <button onClick={() => { setStage("select"); setSelection(null); setAnnotations([]); }}>重选</button>
         <span className="shot-divider" />
@@ -278,16 +342,6 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
         <button className="shot-secondary" onClick={onCancel}>取消</button>
         <button className="shot-primary" disabled={saving} onClick={() => finish("save")}>{saving ? "处理中…" : "保存"}</button>
         <button className="shot-primary" disabled={saving} onClick={() => finish("pin")}>钉住</button>
-      </div>
-      <div className="shot-canvas-wrap">
-        <canvas
-          ref={editCanvasRef}
-          className="shot-edit-canvas"
-          onPointerDown={beginDraw}
-          onPointerMove={moveDraw}
-          onPointerUp={endDraw}
-          onPointerCancel={endDraw}
-        />
       </div>
     </div>
   );
@@ -307,17 +361,28 @@ export function PinView() {
   }, []);
 
   const drag = async (event) => {
-    if (event.button !== 0) return;
+    // 允许左键拖动，忽略右键/中键；兼容 pointer/mouse 事件
+    if (event.button !== undefined && event.button !== 0) return;
+    // 避免点击关闭按钮等触发拖动（当前 Pin 无按钮，但保留）
+    if (event.target.closest && event.target.closest("button")) return;
     try { await getCurrentWindow().startDragging(); } catch {}
   };
 
   const close = async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
     try { await getCurrentWindow().close(); } catch {}
   };
 
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") close(e);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <div className="pin-root" onPointerDown={drag} onContextMenu={close} title="拖动移动 · 右键关闭">
+    <div className="pin-root" onMouseDown={drag} onPointerDown={drag} onContextMenu={close} onDoubleClick={close} title="拖动移动 · 右键/双击/ESC 关闭">
       {src ? <img src={src} alt="Pinned screenshot" draggable="false" /> : <div className="pin-loading">加载中…</div>}
     </div>
   );
