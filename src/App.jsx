@@ -167,7 +167,7 @@ export default function App() {
   };
   const cancelScreenshot = async () => { if (screenshot?.path) { try { await invokeNative("discard_screenshot_capture", { path: screenshot.path }); } catch {} } await restorePetWindow(); };
   const onPointerDown = (e) => {
-    if (e.target.closest(".menu, .rename, .tool-panel, button, input, textarea")) return;
+    if (e.target.closest("button, input, textarea, .clipboard-item, .submenu-item")) return;
     if (tauriOk) { import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); return; }
     setDragging(true); const startX = e.clientX - pos.x; const startY = e.clientY - pos.y;
     const move = (ev) => setPos({ x: ev.clientX - startX, y: ev.clientY - startY });
@@ -181,6 +181,20 @@ export default function App() {
   }, [menu, editing]);
   useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
   useEffect(() => { if (!menu) setProgramOpen(false); }, [menu]);
+  // 窗口边缘自适应：保持窗口始终在可视区域内，避免菜单/面板被屏幕边缘裁切
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        setMenu(false);
+        setProgramOpen(false);
+        setEditing(false);
+        setTool((prev) => (prev === "clipboard" ? null : "clipboard"));
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
   // Tauri 原生文件拖拽（WebView 的 HTML5 DataTransfer 在 Tauri 下拿不到 path，需用 onDragDropEvent）
   useEffect(() => {
     if (tool !== "program-manager") return;
@@ -223,7 +237,7 @@ export default function App() {
       <div className={`pet ${dragging ? "dragging" : ""}`} onPointerDown={onPointerDown}><Blobatar name={name} size={72} expression={activeExpr} animate="always" /></div>
       <div className="pet-shadow" />
       {menu && (
-        <div className={`menu ${programOpen ? "menu--with-submenu" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
+        <div className={`menu ${programOpen ? "menu--with-submenu" : ""}`} onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .submenu-item")) return; import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}>
           <div className="menu-main">
             <button onClick={startRename}>改名</button>
             <button onClick={() => { setShowBubble((v) => !v); setMenu(false); }}>{showBubble ? "隐藏状态" : "显示状态"}</button>
@@ -233,7 +247,7 @@ export default function App() {
                 <span>程序</span><span className="menu-arrow">{programOpen ? "▸" : "▸"}</span>
               </button>
             </div>
-            <button onClick={() => openTool("clipboard")}>文本剪贴板</button>
+            <button onClick={() => openTool("clipboard")}>文本剪贴板 <span style={{opacity:0.6, fontSize:"10px"}}>Alt+C</span></button>
             <button onClick={startScreenshot}>截图与标注</button>
             <div className="menu-separator" />
             <button onClick={closeWindow}>隐藏到后台</button>
@@ -307,8 +321,8 @@ export default function App() {
         </div>
       )}
       {tool === "clipboard" && (
-        <div className="tool-panel clipboard-panel" onPointerDown={(e) => e.stopPropagation()}>
-          <div className="tool-header"><strong>文本剪贴板 · {clipboardHistory.length}</strong><button onClick={() => setTool(null)}>×</button></div>
+        <div className="tool-panel clipboard-panel" onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .clipboard-item")) return; import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}>
+          <div className="tool-header" onPointerDown={(e) => { if (e.target.closest("button")) return; e.stopPropagation(); import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}><strong>文本剪贴板 · {clipboardHistory.length}</strong><button onClick={() => setTool(null)}>×</button></div>
           <div className="clipboard-list">
             {clipboardHistory.length === 0 ? <div className="clipboard-empty">复制文字后会自动出现在这里</div> : clipboardHistory.map((item) => (
               <button className="clipboard-item" key={item.id} onClick={() => copyClipboardItem(item.text)}><span className="clipboard-preview">{item.text.replace(/\s+/g, " ").trim()}</span><span className="clipboard-time">{formatClipboardTime(item.capturedAt)}</span></button>
