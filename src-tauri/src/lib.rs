@@ -297,10 +297,26 @@ fn run_cmd(command: String) -> Result<(), String> {
             cmd.spawn().map(|_| ()).map_err(|err| format!("启动失败: {err}"))?;
             return Ok(());
         }
-        if !ext.eq_ignore_ascii_case("cmd") && !ext.eq_ignore_ascii_case("bat") {
-            return Err("脚本文件仅支持 .cmd / .bat / .lnk".into());
+        if ext.eq_ignore_ascii_case("py") {
+            // .py 文件统一走 uv run
+            let mut cmd = Command::new("cmd");
+            let arg = format!("uv run \"{}\"", candidate_path.to_string_lossy().replace('"', "\"\""));
+            cmd.args(["/K", &arg]);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(CREATE_NEW_CONSOLE);
+            cmd.spawn().map(|_| ()).map_err(|err| format!("启动失败: {err}"))?;
+            return Ok(());
         }
-        format!("call \"{}\"", candidate_path.to_string_lossy().replace('"', "\"\""))
+        if ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat") {
+            // 直接用 cmd /C 启动，避免 call 引号转义问题（之前 call "path" 在含空格路径下会产生 \" 错误）
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", &candidate_path.to_string_lossy().to_string()]);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(CREATE_NEW_CONSOLE);
+            cmd.spawn().map(|_| ()).map_err(|err| format!("启动失败: {err}"))?;
+            return Ok(());
+        }
+        return Err("脚本文件仅支持 .cmd / .bat / .lnk / .py(uv)".into());
     } else {
         command
     };

@@ -334,6 +334,10 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   color: #dfe6f5 !important;
   background: rgba(255, 255, 255, 0.06) !important;
 }
+.drop-zone { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; padding:10px 8px; border:1px dashed rgba(122,162,255,0.35); border-radius:8px; background: rgba(122,162,255,0.06); color:#8ea6d6; font-size:10px; text-align:center; transition: all 120ms ease; }
+.drop-zone.drag-active { border-color:#7aa2ff; background: rgba(122,162,255,0.14); color:#dfe6f5; transform: scale(1.01); }
+.drop-zone-icon { font-size:16px; line-height:1; }
+.drop-zone-hint { font-size:9px; color:#7a8599; }
 .program-panel .program-desc { font-size:10px; color:#8f9ab1; line-height:1.4; margin-bottom:2px; }
 .program-list { display:flex; flex-direction:column; gap:6px; margin-top:6px; overflow-y:auto; flex:1; min-height:0; }
 .program-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:8px; }

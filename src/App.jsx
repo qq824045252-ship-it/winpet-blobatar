@@ -75,6 +75,7 @@ export default function App() {
   });
   const [newProgName, setNewProgName] = useState("");
   const [newProgCmd, setNewProgCmd] = useState("");
+  const [dragActive, setDragActive] = useState(false);
   const [clipboardHistory, setClipboardHistory] = useState(() => {
     try { const saved = JSON.parse(localStorage.getItem(CLIPBOARD_HISTORY_KEY) || "[]"); return Array.isArray(saved) ? saved.slice(0, MAX_CLIPBOARD_ITEMS) : []; } catch { return []; }
   });
@@ -180,6 +181,41 @@ export default function App() {
   }, [menu, editing]);
   useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
   useEffect(() => { if (!menu) setProgramOpen(false); }, [menu]);
+  // Tauri 原生文件拖拽（WebView 的 HTML5 DataTransfer 在 Tauri 下拿不到 path，需用 onDragDropEvent）
+  useEffect(() => {
+    if (tool !== "program-manager") return;
+    let unlisten;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        unlisten = await getCurrentWindow().onDragDropEvent((event) => {
+          if (cancelled) return;
+          if (event.payload.type === "over") {
+            setDragActive(true);
+          } else if (event.payload.type === "drop") {
+            setDragActive(false);
+            const paths = event.payload.paths || [];
+            if (paths.length) {
+              const path = paths[0];
+              const isPy = /\.py$/i.test(path);
+              const finalCmd = isPy ? `uv run "${path}"` : path;
+              setNewProgCmd(finalCmd);
+              setNewProgName((prev) => {
+                if (prev.trim()) return prev;
+                const base = path.split(/[\\/]/).pop() || path;
+                return base.replace(/\.(exe|lnk|cmd|bat|py)$/i, "") || base;
+              });
+              toast(isPy ? `已生成 uv 命令：${finalCmd}` : `已拖入：${path}`);
+            }
+          } else {
+            setDragActive(false);
+          }
+        });
+      } catch {}
+    })();
+    return () => { cancelled = true; if (unlisten) unlisten(); setDragActive(false); };
+  }, [tool]);
   if (screenshot) { return <ScreenshotEditor capture={screenshot} onCancel={cancelScreenshot} onFinish={restorePetWindow} />; }
   return (
     <div className="pet-root" style={tauriOk ? undefined : { transform: `translate(${pos.x}px, ${pos.y}px)` }} onDoubleClick={startRename} onContextMenu={(e) => { e.preventDefault(); setMenu(true); setEditing(false); setTool(null); }}>
@@ -228,10 +264,45 @@ export default function App() {
       {tool === "program-manager" && (
         <div className="tool-panel program-panel" onPointerDown={(e) => e.stopPropagation()}>
           <div className="tool-header"><strong>添加程序</strong><button onClick={() => setTool(null)}>×</button></div>
+          <div
+            className={`drop-zone ${dragActive ? "drag-active" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault(); setDragActive(false);
+              const files = e.dataTransfer?.files;
+              let path = "";
+              if (files && files.length > 0) {
+                const f = files[0];
+                // Tauri 暴露 path，浏览器回退 name
+                path = f.path || f.name || "";
+                // 某些环境只有 name，尝试用 webkitRelativePath
+                if (!path && e.dataTransfer.getData) path = e.dataTransfer.getData("text/plain");
+              } else if (e.dataTransfer?.getData) {
+                path = e.dataTransfer.getData("text/plain");
+              }
+              path = (path || "").trim().replace(/^"|"$/g, "");
+              if (path) {
+                const isPy = /\.py$/i.test(path);
+                const finalCmd = isPy ? `uv run "${path}"` : path;
+                setNewProgCmd(finalCmd);
+                if (!newProgName.trim()) {
+                  const base = path.split(/[\\/]/).pop() || path;
+                  const name = base.replace(/\.(exe|lnk|cmd|bat|py)$/i, "");
+                  setNewProgName(name || base);
+                }
+                toast(isPy ? `已生成 uv 命令：${finalCmd}` : `已拖入：${path}`);
+              }
+            }}
+          >
+            <span className="drop-zone-icon">⤓</span>
+            <span>拖入 .exe / .lnk / .cmd / .bat / .py 文件自动生成地址</span>
+            <span className="drop-zone-hint">支持 uv：如 uv run app.py / uv sync</span>
+          </div>
           <label>显示名称</label>
           <input value={newProgName} onChange={(e) => setNewProgName(e.target.value)} placeholder="例如：VS Code" />
-          <label>路径或命令（支持 .exe / .lnk 快捷方式）</label>
-          <input value={newProgCmd} onChange={(e) => setNewProgCmd(e.target.value)} placeholder="C:\app.exe / 快捷方式.lnk 或 ipconfig /all" />
+          <label>路径或命令（支持 .exe / .lnk / uv）</label>
+          <input value={newProgCmd} onChange={(e) => setNewProgCmd(e.target.value)} placeholder="C:\app.exe / 快捷方式.lnk / uv run app.py" />
           <div className="tool-actions"><button onClick={addProgram}>添加</button><button onClick={() => setTool(null)}>取消</button></div>
         </div>
       )}
