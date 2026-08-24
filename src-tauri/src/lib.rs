@@ -34,6 +34,14 @@ struct WinRect {
 }
 
 #[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct WinPoint {
+    x: i32,
+    y: i32,
+}
+
+#[cfg(target_os = "windows")]
 #[link(name = "user32")]
 extern "system" {
     fn GetWindow(hWnd: isize, uCmd: u32) -> isize;
@@ -41,9 +49,12 @@ extern "system" {
     fn GetWindowRect(hWnd: isize, lpRect: *mut WinRect) -> i32;
     fn GetClassNameW(hWnd: isize, lpClassName: *mut u16, nMaxCount: i32) -> i32;
     fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
+    fn GetCursorPos(lpPoint: *mut WinPoint) -> i32;
+    fn GetAsyncKeyState(vKey: i32) -> i16;
 }
 
 const GW_HWNDNEXT: u32 = 2;
+const VK_LBUTTON: i32 = 0x01;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
@@ -252,6 +263,21 @@ fn drag_window(app: tauri::AppHandle) {
     }
 }
 
+// 返回 [x, y, left_button_down]，供前端手动拖拽窗口用
+// （原生 caption 拖拽会被 Windows 限制在屏幕内，手动 setPosition 可移到屏幕上方）
+#[tauri::command]
+fn cursor_state() -> Option<[i32; 3]> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut pt = WinPoint::default();
+        if unsafe { GetCursorPos(&mut pt) } != 0 {
+            let down = unsafe { GetAsyncKeyState(VK_LBUTTON) } < 0; // 高位为 1 表示按下
+            return Some([pt.x, pt.y, if down { 1 } else { 0 }]);
+        }
+    }
+    None
+}
+
 #[tauri::command]
 fn launch_exe(path: String) -> Result<(), String> {
     let path = clean_path(&path);
@@ -352,6 +378,17 @@ fn run_cmd(command: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("CMD 启动失败: {err}"))
+}
+
+#[tauri::command]
+fn restart_explorer() -> Result<(), String> {
+    // 结束资源管理器并重启（先等它完全退出再启动新实例）
+    let script = "Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 600; Start-Process explorer";
+    let mut child = powershell(script)
+        .spawn()
+        .map_err(|err| format!("重启资源管理器失败: {err}"))?;
+    let _ = child.wait();
+    Ok(())
 }
 
 #[tauri::command]
@@ -685,6 +722,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_stats,
             drag_window,
+            cursor_state,
+            restart_explorer,
             launch_exe,
             run_cmd,
             clipboard_sequence,

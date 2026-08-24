@@ -166,9 +166,51 @@ export default function App() {
     } catch (err) { try { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await getCurrentWindow().show(); } catch {} await restorePetWindow(); toast(`截图启动失败：${String(err)}`); }
   };
   const cancelScreenshot = async () => { if (screenshot?.path) { try { await invokeNative("discard_screenshot_capture", { path: screenshot.path }); } catch {} } await restorePetWindow(); };
+  // 手动拖拽窗口：轮询系统光标位置 + setPosition 跟随。
+  // 原生 caption 拖拽会被 Windows 限制在屏幕内（窗口顶部不能越过屏幕上沿），
+  // 手动方式可让宠物图标拖到屏幕最上方。用 GetAsyncKeyState 检测左键松开，
+  // 不依赖指针事件传递（鼠标移出窗口也能跟手、也能停止）。
+  const startManualDrag = async (event) => {
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const { invoke: inv } = await import("@tauri-apps/api/core");
+      const win = getCurrentWindow();
+      const pos = await win.outerPosition();
+      const start = await inv("cursor_state");
+      if (!start) return;
+      const offsetX = start[0] - pos.x;
+      const offsetY = start[1] - pos.y;
+      let active = true;
+      const el = event.currentTarget;
+      try { el.setPointerCapture?.(event.pointerId); } catch {}
+      const stop = () => {
+        if (!active) return;
+        active = false;
+        try { el.releasePointerCapture?.(event.pointerId); } catch {}
+      };
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const loop = async () => {
+        while (active) {
+          try {
+            const c = await inv("cursor_state");
+            if (!c || c[2] === 0) { active = false; break; } // 左键已松开
+            const nx = c[0] - offsetX;
+            const ny = c[1] - offsetY;
+            if (nx !== pos.x || ny !== pos.y) {
+              win.setPosition({ type: "Physical", x: nx, y: ny }).catch(() => {});
+            }
+          } catch { active = false; }
+          await sleep(12);
+        }
+      };
+      loop();
+    } catch {}
+  };
   const onPointerDown = (e) => {
     if (e.target.closest("button, input, textarea, .clipboard-item, .submenu-item")) return;
-    if (tauriOk) { import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); return; }
+    if (tauriOk) { startManualDrag(e); return; }
     setDragging(true); const startX = e.clientX - pos.x; const startY = e.clientY - pos.y;
     const move = (ev) => setPos({ x: ev.clientX - startX, y: ev.clientY - startY });
     const up = () => { setDragging(false); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
@@ -237,7 +279,7 @@ export default function App() {
       <div className={`pet ${dragging ? "dragging" : ""}`} onPointerDown={onPointerDown}><Blobatar name={name} size={72} expression={activeExpr} animate="always" /></div>
       <div className="pet-shadow" />
       {menu && (
-        <div className={`menu ${programOpen ? "menu--with-submenu" : ""}`} onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .submenu-item")) return; import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}>
+        <div className={`menu ${programOpen ? "menu--with-submenu" : ""}`} onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .submenu-item")) return; startManualDrag(e); }}>
           <div className="menu-main">
             <button onClick={startRename}>改名</button>
             <button onClick={() => { setShowBubble((v) => !v); setMenu(false); }}>{showBubble ? "隐藏状态" : "显示状态"}</button>
@@ -249,6 +291,7 @@ export default function App() {
             </div>
             <button onClick={() => openTool("clipboard")}>剪切板 <span style={{opacity:0.6, fontSize:"10px"}}>Alt+C</span></button>
             <button onClick={startScreenshot}>截图</button>
+            <button onClick={async () => { setMenu(false); try { await invokeNative("restart_explorer"); toast("已重启资源管理器"); } catch (err) { toast(String(err)); } }}>重启资源管理器</button>
             <div className="menu-separator" />
             <button onClick={closeWindow}>隐藏到后台</button>
             <button className="danger" onClick={async () => { setMenu(false); try { await invokeNative("quit_app"); } catch {} }}>退出</button>
@@ -321,8 +364,8 @@ export default function App() {
         </div>
       )}
       {tool === "clipboard" && (
-        <div className="tool-panel clipboard-panel" onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .clipboard-item")) return; import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}>
-          <div className="tool-header" onPointerDown={(e) => { if (e.target.closest("button")) return; e.stopPropagation(); import("@tauri-apps/api/core").then(({ invoke: inv }) => inv("drag_window")).catch(() => {}); }}><strong>剪切板 · {clipboardHistory.length}</strong><button onClick={() => setTool(null)}>×</button></div>
+        <div className="tool-panel clipboard-panel" onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .clipboard-item")) return; startManualDrag(e); }}>
+          <div className="tool-header" onPointerDown={(e) => { if (e.target.closest("button")) return; e.stopPropagation(); startManualDrag(e); }}><strong>剪切板 · {clipboardHistory.length}</strong><button onClick={() => setTool(null)}>×</button></div>
           <div className="clipboard-list">
             {clipboardHistory.length === 0 ? <div className="clipboard-empty">复制文字后会自动出现在这里</div> : clipboardHistory.map((item) => (
               <button className="clipboard-item" key={item.id} onClick={() => copyClipboardItem(item.text)}><span className="clipboard-preview">{item.text.replace(/\s+/g, " ").trim()}</span><span className="clipboard-time">{formatClipboardTime(item.capturedAt)}</span></button>
