@@ -135,12 +135,12 @@
   color: #fff;
 }
 
-/* 微信风格悬浮工具栏 */
+/* 微信风格悬浮工具栏（两行：工具行 + 样式行） */
 .shot-toolbar {
   position: absolute;
   display: flex;
-  align-items: center;
-  gap: 2px;
+  flex-direction: column;
+  gap: 4px;
   padding: 6px 8px;
   background: rgba(26, 30, 40, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -149,6 +149,81 @@
   backdrop-filter: blur(12px);
   white-space: nowrap;
   z-index: 5;
+}
+
+.shot-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.shot-style-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 4px;
+  gap: 3px;
+}
+
+/* 颜色色板 */
+.shot-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  padding: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.shot-swatch.active {
+  outline: 2px solid #5d96ff;
+  outline-offset: 1px;
+}
+
+.shot-swatch-custom {
+  position: relative;
+  border: 1px dashed rgba(255, 255, 255, 0.5);
+  overflow: hidden;
+}
+
+.shot-swatch-custom input[type="color"] {
+  position: absolute;
+  inset: -6px;
+  width: 30px;
+  height: 30px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.shot-style-label {
+  font-size: 11px;
+  color: #9fb0cc;
+  margin: 0 2px;
+  user-select: none;
+}
+
+.shot-style-btn {
+  min-width: 26px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  background: transparent;
+  color: #dfe7f6;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.shot-style-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.shot-style-btn.active {
+  border-color: #5d96ff;
+  background: #19305b;
+  color: #fff;
 }
 
 .shot-tool-icon {

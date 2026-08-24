@@ -14,6 +14,12 @@ const TOOLS = [
 
 const MIN_SELECT = 4;
 
+const PALETTE = ["#ff4655", "#ff7a3d", "#ffc53d", "#2ee06a", "#3db9ff", "#9b59ff", "#ffffff", "#262a33"];
+
+const DEFAULT_STYLE = { color: "#ff4655", strokeWidth: 4, fontSize: 28 };
+const WIDTH_OPTIONS = [2, 4, 6, 10];
+const SIZE_OPTIONS = [16, 24, 32, 48];
+
 const ICONS = {
   reselect: (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
@@ -83,9 +89,9 @@ function canvasPoint(canvas, event) {
 }
 
 let _measureCtx = null;
-function measureTextWidth(text) {
+function measureTextWidth(text, size) {
   if (!_measureCtx) _measureCtx = document.createElement("canvas").getContext("2d");
-  _measureCtx.font = "600 28px 'Segoe UI', sans-serif";
+  _measureCtx.font = `600 ${size ?? 28}px 'Segoe UI', sans-serif`;
   return _measureCtx.measureText(text).width;
 }
 
@@ -103,8 +109,9 @@ function distToSegment(px, py, x1, y1, x2, y2) {
 function hitTest(item, x, y) {
   const pad = 8;
   if (item.type === "text") {
-    const w = measureTextWidth(item.text);
-    return x >= item.x - pad && x <= item.x + w + pad && y >= item.y - pad && y <= item.y + 34 + pad;
+    const size = item.fontSize ?? 28;
+    const w = measureTextWidth(item.text, size);
+    return x >= item.x - pad && x <= item.x + w + pad && y >= item.y - pad && y <= item.y + size * 1.2 + pad;
   }
   if (item.type === "pen") {
     return item.points.some((p) => Math.hypot(p.x - x, p.y - y) <= 12);
@@ -130,7 +137,7 @@ function translateAnnotation(item, dx, dy) {
   return { ...item, x1: item.x1 + dx, y1: item.y1 + dy, x2: item.x2 + dx, y2: item.y2 + dy };
 }
 
-// 标注图形的包围盒（选中高亮用）
+// 标注图形的包围盒（选中高亮/缩放手柄用）
 function annotationBounds(item) {
   if (item.type === "pen") {
     const xs = item.points.map((p) => p.x);
@@ -142,9 +149,69 @@ function annotationBounds(item) {
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }
   if (item.type === "text") {
-    return { x: item.x, y: item.y, w: measureTextWidth(item.text), h: 34 };
+    const size = item.fontSize ?? 28;
+    return { x: item.x, y: item.y, w: measureTextWidth(item.text, size), h: size * 1.2 };
   }
   return normalizeRect({ x: item.x1, y: item.y1 }, { x: item.x2, y: item.y2 });
+}
+
+// 8 个缩放手柄的位置（包围盒的角与边中点）
+function handlePositions(b) {
+  return {
+    nw: { x: b.x, y: b.y },
+    n: { x: b.x + b.w / 2, y: b.y },
+    ne: { x: b.x + b.w, y: b.y },
+    e: { x: b.x + b.w, y: b.y + b.h / 2 },
+    se: { x: b.x + b.w, y: b.y + b.h },
+    s: { x: b.x + b.w / 2, y: b.y + b.h },
+    sw: { x: b.x, y: b.y + b.h },
+    w: { x: b.x, y: b.y + b.h / 2 },
+  };
+}
+
+// 由手柄拖动计算新的缩放变换（围绕对侧锚点，支持自由拉伸）
+function computeResize(bbox, handle, px, py, minSize) {
+  const { x, y, w, h } = bbox;
+  const min = minSize ?? 10;
+  let nx = x;
+  let ny = y;
+  let nw = w;
+  let nh = h;
+  if (handle.includes("e")) nw = Math.max(min, px - x);
+  if (handle.includes("w")) { nw = Math.max(min, x + w - px); nx = x + w - nw; }
+  if (handle.includes("s")) nh = Math.max(min, py - y);
+  if (handle.includes("n")) { nh = Math.max(min, y + h - py); ny = y + h - nh; }
+  // 锚点：被拖手柄的对侧（边手柄锚在对面边中点）
+  const ax = handle.includes("w") ? x + w : handle.includes("e") ? x : x + w / 2;
+  const ay = handle.includes("n") ? y + h : handle.includes("s") ? y : y + h / 2;
+  return {
+    nx, ny, nw, nh, ax, ay,
+    sx: nw / Math.max(1, w),
+    sy: nh / Math.max(1, h),
+  };
+}
+
+// 应用缩放变换到标注（文字按字号缩放）
+function resizeAnnotation(item, r) {
+  const tx = (v) => r.ax + (v - r.ax) * r.sx;
+  const ty = (v) => r.ay + (v - r.ay) * r.sy;
+  if (item.type === "pen") {
+    return { ...item, points: item.points.map((p) => ({ x: tx(p.x), y: ty(p.y) })) };
+  }
+  if (item.type === "text") {
+    const scale = (r.sx + r.sy) / 2;
+    return {
+      ...item,
+      x: tx(item.x),
+      y: ty(item.y),
+      fontSize: Math.max(8, Math.round((item.fontSize ?? 28) * scale)),
+    };
+  }
+  return {
+    ...item,
+    x1: tx(item.x1), y1: ty(item.y1),
+    x2: tx(item.x2), y2: ty(item.y2),
+  };
 }
 
 function drawArrow(ctx, item) {
@@ -163,9 +230,11 @@ function drawArrow(ctx, item) {
 
 function drawAnnotation(ctx, item) {
   ctx.save();
-  ctx.strokeStyle = "#ff4655";
-  ctx.fillStyle = "#ff4655";
-  ctx.lineWidth = 4;
+  const color = item.color ?? "#ff4655";
+  const width = item.strokeWidth ?? 4;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = width;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   if (item.type === "pen") {
@@ -190,13 +259,13 @@ function drawAnnotation(ctx, item) {
   } else if (item.type === "arrow") {
     drawArrow(ctx, item);
   } else if (item.type === "text") {
-    ctx.font = "600 28px 'Segoe UI', sans-serif";
+    ctx.font = `600 ${item.fontSize ?? 28}px 'Segoe UI', sans-serif`;
     ctx.textBaseline = "top";
-    ctx.lineWidth = 4;
+    ctx.lineWidth = Math.max(3, (item.fontSize ?? 28) / 7);
     ctx.lineJoin = "round";
     ctx.strokeStyle = "rgba(0,0,0,.6)";
     ctx.strokeText(item.text, item.x, item.y);
-    ctx.fillStyle = "#ff4655";
+    ctx.fillStyle = color;
     ctx.fillText(item.text, item.x, item.y);
   }
   ctx.restore();
@@ -228,6 +297,7 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
   const [textDraft, setTextDraft] = useState(null); // {x, y, value} 物理像素
   const [hoverWindow, setHoverWindow] = useState(null); // 选区阶段悬停高亮的窗口（capture 坐标）
   const [selectedIndex, setSelectedIndex] = useState(null); // 编辑阶段选中的标注下标
+  const [style, setStyle] = useState({ ...DEFAULT_STYLE }); // 新标注使用的样式
   // DPR：canvas 位图像素 / CSS 像素，用于把 DOM 定位换算成 CSS 像素
   const [dpr, setDpr] = useState(() => (typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1));
 
@@ -339,7 +409,7 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     );
     annotations.forEach((item) => drawAnnotation(ctx, item));
     if (draft) drawAnnotation(ctx, draft);
-    // 选中标注的虚线高亮框
+    // 选中标注：虚线高亮框 + 8 个缩放手柄
     if (selectedIndex != null) {
       const sel = annotations[selectedIndex];
       if (sel) {
@@ -349,6 +419,17 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
         ctx.lineWidth = 1.5;
         ctx.setLineDash([6, 4]);
         ctx.strokeRect(b.x - 6, b.y - 6, Math.max(0, b.w + 12), Math.max(0, b.h + 12));
+        ctx.setLineDash([]);
+        // 手柄
+        for (const hp of Object.values(handlePositions(b))) {
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#2f6fed";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.rect(hp.x - 4, hp.y - 4, 8, 8);
+          ctx.fill();
+          ctx.stroke();
+        }
         ctx.restore();
       }
     }
@@ -374,7 +455,12 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
     textDraftRef.current = null;
     setTextDraft(null);
     const v = t.value.trim();
-    if (v) setAnnotations((items) => [...items, { type: "text", x: t.x, y: t.y, text: v }]);
+    if (v) {
+      setAnnotations((items) => [...items, {
+        type: "text", x: t.x, y: t.y, text: v,
+        color: style.color, fontSize: style.fontSize,
+      }]);
+    }
   };
 
   // 文字输入框聚焦：WebView2 里挂载后立即 focus 不可靠，多重尝试 + activeElement 校验
@@ -507,8 +593,8 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
       return;
     }
     const item = tool === "pen"
-      ? { type: "pen", points: [point] }
-      : { type: tool, x1: point.x, y1: point.y, x2: point.x, y2: point.y };
+      ? { type: "pen", points: [point], color: style.color, strokeWidth: style.strokeWidth }
+      : { type: tool, x1: point.x, y1: point.y, x2: point.x, y2: point.y, color: style.color, strokeWidth: style.strokeWidth };
     activeRef.current = item;
     setDraft(item);
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -534,9 +620,45 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
   };
 
   // 选择/移动工具
+  const resizeRef = useRef(null);
+
+  const beginResize = (event, handle) => {
+    const sel = annotations[selectedIndex];
+    if (!sel) return;
+    resizeRef.current = {
+      handle,
+      bbox: annotationBounds(sel),
+      orig: sel,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const moveResize = (event) => {
+    const rz = resizeRef.current;
+    if (!rz) return;
+    const point = canvasPoint(editCanvasRef.current, event);
+    const r = computeResize(rz.bbox, rz.handle, point.x, point.y);
+    const moved = resizeAnnotation(rz.orig, r);
+    setAnnotations((items) => items.map((it, i) => (i === selectedIndex ? moved : it)));
+  };
+
   const beginSelect = (event) => {
     if (saving || !selection) return;
     const point = canvasPoint(editCanvasRef.current, event);
+    // 优先命中已选中标注的缩放手柄
+    if (selectedIndex != null) {
+      const sel = annotations[selectedIndex];
+      if (sel) {
+        const hps = handlePositions(annotationBounds(sel));
+        for (const [name, hp] of Object.entries(hps)) {
+          if (Math.hypot(point.x - hp.x, point.y - hp.y) <= 9) {
+            beginResize(event, name);
+            return;
+          }
+        }
+      }
+    }
+    // 再检查命中标注（从最上层开始）
     for (let i = annotations.length - 1; i >= 0; i--) {
       if (hitTest(annotations[i], point.x, point.y)) {
         movingRef.current = { index: i, startX: point.x, startY: point.y, orig: annotations[i] };
@@ -549,6 +671,10 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
   };
 
   const moveSelect = (event) => {
+    if (resizeRef.current) {
+      moveResize(event);
+      return;
+    }
     const m = movingRef.current;
     if (!m) return;
     const point = canvasPoint(editCanvasRef.current, event);
@@ -559,10 +685,20 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
   };
 
   const endSelect = () => {
+    resizeRef.current = null;
     movingRef.current = null;
   };
 
   const undo = () => setAnnotations((items) => items.slice(0, -1));
+
+  // 修改样式：选中标注则修改它，否则设置新标注的默认样式
+  const applyStyle = (patch) => {
+    if (selectedIndex != null) {
+      setAnnotations((items) => items.map((it, i) => (i === selectedIndex ? { ...it, ...patch } : it)));
+    } else {
+      setStyle((prev) => ({ ...prev, ...patch }));
+    }
+  };
 
   const reselect = () => {
     setStage("select");
@@ -673,14 +809,20 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
 
   if (!selection) return <div className="shot-root shot-loading">正在准备截图…</div>;
 
-  const toolbarW = 440;
-  const toolbarH = 48;
+  const toolbarW = 540;
+  const toolbarH = 84;
   let tbX = selection.x + selection.w / 2;
   let tbY = selection.y + selection.h + 10;
   if (tbY + toolbarH > capture.height) tbY = selection.y - toolbarH - 10;
   tbY = Math.max(6, Math.min(tbY, capture.height - toolbarH - 6));
   tbX = Math.max(toolbarW / 2 + 8, Math.min(tbX, capture.width - toolbarW / 2 - 8));
   const toolbarStyle = { left: tbX / dpr, top: tbY / dpr, transform: "translateX(-50%)" };
+
+  // 样式栏当前值：选中标注则取标注的样式，否则取新标注默认样式
+  const selectedAnn = selectedIndex != null ? annotations[selectedIndex] : null;
+  const activeColor = selectedAnn ? (selectedAnn.color ?? DEFAULT_STYLE.color) : style.color;
+  const activeWidth = selectedAnn ? (selectedAnn.strokeWidth ?? DEFAULT_STYLE.strokeWidth) : style.strokeWidth;
+  const activeSize = selectedAnn ? (selectedAnn.fontSize ?? DEFAULT_STYLE.fontSize) : style.fontSize;
   const editStyle = {
     left: selection.x / dpr,
     top: selection.y / dpr,
@@ -734,30 +876,56 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
         </div>
       )}
       <div className="shot-toolbar" style={toolbarStyle} onPointerDown={commitText}>
-        <button className="shot-tool-icon" title="重选" onClick={reselect}>{ICONS.reselect}</button>
-        <div className="shot-tool-sep" />
-        {TOOLS.map(([id, label]) => (
-          <button
-            key={id}
-            className={`shot-tool-icon ${tool === id ? "active" : ""}`}
-            title={label}
-            onClick={() => setTool(id)}
-          >
-            {ICONS[id]}
+        <div className="shot-toolbar-row">
+          <button className="shot-tool-icon" title="重选" onClick={reselect}>{ICONS.reselect}</button>
+          <div className="shot-tool-sep" />
+          {TOOLS.map(([id, label]) => (
+            <button
+              key={id}
+              className={`shot-tool-icon ${tool === id ? "active" : ""}`}
+              title={label}
+              onClick={() => { setTool(id); if (id !== "select") setSelectedIndex(null); }}
+            >
+              {ICONS[id]}
+            </button>
+          ))}
+          <div className="shot-tool-sep" />
+          <button className="shot-tool-icon" title="撤销 (Ctrl+Z)" disabled={!annotations.length} onClick={undo}>
+            {ICONS.undo}
           </button>
-        ))}
-        <div className="shot-tool-sep" />
-        <button className="shot-tool-icon" title="撤销 (Ctrl+Z)" disabled={!annotations.length} onClick={undo}>
-          {ICONS.undo}
-        </button>
-        <div className="shot-toolbar-spacer" />
-        <button className="shot-tool-action" onClick={onCancel} disabled={saving}>取消</button>
-        <button className="shot-tool-action shot-tool-pin" title="钉住" onClick={() => finish("pin")} disabled={saving}>
-          {ICONS.pin}
-        </button>
-        <button className="shot-tool-action shot-tool-save" onClick={() => finish("save")} disabled={saving}>
-          {saving ? "处理中…" : "保存"}
-        </button>
+          <div className="shot-toolbar-spacer" />
+          <button className="shot-tool-action" onClick={onCancel} disabled={saving}>取消</button>
+          <button className="shot-tool-action shot-tool-pin" title="钉住" onClick={() => finish("pin")} disabled={saving}>
+            {ICONS.pin}
+          </button>
+          <button className="shot-tool-action shot-tool-save" onClick={() => finish("save")} disabled={saving}>
+            {saving ? "处理中…" : "保存"}
+          </button>
+        </div>
+        <div className="shot-toolbar-row shot-style-row">
+          {PALETTE.map((c) => (
+            <button
+              key={c}
+              className={`shot-swatch ${activeColor.toLowerCase() === c ? "active" : ""}`}
+              style={{ background: c }}
+              title={c}
+              onClick={() => applyStyle({ color: c })}
+            />
+          ))}
+          <label className="shot-swatch shot-swatch-custom" style={{ background: activeColor }} title="自定义颜色">
+            <input type="color" value={activeColor} onChange={(e) => applyStyle({ color: e.target.value })} />
+          </label>
+          <div className="shot-tool-sep" />
+          <span className="shot-style-label">粗细</span>
+          {WIDTH_OPTIONS.map((w) => (
+            <button key={w} className={`shot-style-btn ${activeWidth === w ? "active" : ""}`} onClick={() => applyStyle({ strokeWidth: w })}>{w}</button>
+          ))}
+          <div className="shot-tool-sep" />
+          <span className="shot-style-label">字号</span>
+          {SIZE_OPTIONS.map((s) => (
+            <button key={s} className={`shot-style-btn ${activeSize === s ? "active" : ""}`} onClick={() => applyStyle({ fontSize: s })}>{s}</button>
+          ))}
+        </div>
       </div>
       {error && <div className="shot-error">{error}</div>}
     </div>
