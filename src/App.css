@@ -365,6 +365,23 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 .program-acts button { font-size:10px !important; padding:4px 7px !important; }
 .program-acts button.danger { color:#ff9a9a !important; border-color: rgba(255,122,122,0.25) !important; }
 
+.clipboard-search {
+  width: 100%;
+  margin: 6px 0 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: #e6ebf5;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.clipboard-search::placeholder { color: #7a8599; }
+.clipboard-search:focus {
+  border-color: rgba(122, 162, 255, 0.55);
+  background: rgba(122, 162, 255, 0.08);
+}
 .clipboard-list {
   display: flex;
   flex: 1;

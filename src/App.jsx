@@ -12,6 +12,9 @@ const STORAGE_KEY = "winpet-tools-v1";
 const PROGRAMS_KEY = "winpet-programs-v2";
 const CLIPBOARD_HISTORY_KEY = "winpet-clipboard-history-v1";
 const MAX_CLIPBOARD_ITEMS = 50;
+// 只有这些区域接收鼠标；窗口其余透明处点击穿透到下层程序
+const CLICK_HIT_SELECTORS = ".pet, .bubble, .menu, .rename, .tool-panel, .notice";
+const CLICK_HIT_PAD = 6;
 
 function formatStats(s) {
   const net = s.net >= 1024 ? `${(s.net / 1024).toFixed(1)}M/s` : `${(s.net | 0)}K/s`;
@@ -79,16 +82,128 @@ export default function App() {
   const [clipboardHistory, setClipboardHistory] = useState(() => {
     try { const saved = JSON.parse(localStorage.getItem(CLIPBOARD_HISTORY_KEY) || "[]"); return Array.isArray(saved) ? saved.slice(0, MAX_CLIPBOARD_ITEMS) : []; } catch { return []; }
   });
+  const [clipboardQuery, setClipboardQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const inputRef = useRef(null);
   const noticeTimer = useRef(null);
   const windowSnapshotRef = useRef(null);
+  const ignoringCursorRef = useRef(false);
   const activeExpr = EXPRESSIONS[autoExpr] ?? idle;
+  const filteredClipboard = useMemo(() => {
+    const q = clipboardQuery.trim().toLowerCase();
+    if (!q) return clipboardHistory;
+    return clipboardHistory.filter((item) => item.text.toLowerCase().includes(q));
+  }, [clipboardHistory, clipboardQuery]);
 
   useEffect(() => { try { localStorage.setItem(PROGRAMS_KEY, JSON.stringify(programs)); } catch {} }, [programs]);
   useEffect(() => { try { localStorage.setItem(CLIPBOARD_HISTORY_KEY, JSON.stringify(clipboardHistory)); } catch {} }, [clipboardHistory]);
+
+  // 透明区域点击穿透：默认忽略光标；仅当光标落在宠物/气泡/菜单等命中区时才接收点击。
+  // 因为 ignore 后窗口收不到 mouseenter，所以用系统光标坐标轮询做命中检测。
+  useEffect(() => {
+    if (!tauriOk) return undefined;
+    let cancelled = false;
+    let win = null;
+    const setIgnore = async (ignore) => {
+      if (cancelled || ignoringCursorRef.current === ignore) return;
+      try {
+        if (!win) {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          win = getCurrentWindow();
+        }
+        await win.setIgnoreCursorEvents(ignore);
+        ignoringCursorRef.current = ignore;
+        if (ignore) {
+          setMenu(false);
+          setProgramOpen(false);
+          setEditing(false);
+        }
+      } catch {}
+    };
+    if (screenshot) {
+      setIgnore(false);
+      return () => { cancelled = true; };
+    }
+    const pointHits = (clientX, clientY) => {
+      // elementFromPoint 比手写 rect 更稳（含圆角/子元素）
+      const stacked = document.elementsFromPoint(clientX, clientY);
+      if (stacked.some((el) => el.closest?.(CLICK_HIT_SELECTORS))) return true;
+      const nodes = document.querySelectorAll(CLICK_HIT_SELECTORS);
+      for (const el of nodes) {
+        const r = el.getBoundingClientRect();
+        if (
+          clientX >= r.left - CLICK_HIT_PAD
+          && clientX <= r.right + CLICK_HIT_PAD
+          && clientY >= r.top - CLICK_HIT_PAD
+          && clientY <= r.bottom + CLICK_HIT_PAD
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
+    let busy = false;
+    const tick = async () => {
+      if (cancelled || busy) return;
+      busy = true;
+      try {
+        if (!win) {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          win = getCurrentWindow();
+        }
+        const cursor = await invokeNative("cursor_state");
+        if (!cursor || cancelled) return;
+        const [cx, cy, leftDown] = cursor;
+        // 拖拽中保持接住鼠标，避免拖到透明区后丢事件
+        if (leftDown && !ignoringCursorRef.current) {
+          await setIgnore(false);
+          return;
+        }
+        const pos = await win.outerPosition();
+        const scale = await win.scaleFactor();
+        // 物理像素 → CSS 像素；部分环境 outerPosition 已是逻辑坐标，再 /scale 会偏，两侧都试
+        let clientX = (cx - pos.x) / scale;
+        let clientY = (cy - pos.y) / scale;
+        let hit = pointHits(clientX, clientY);
+        if (!hit && scale !== 1) {
+          clientX = cx - pos.x;
+          clientY = cy - pos.y;
+          hit = pointHits(clientX, clientY);
+        }
+        if (!hit && scale === 1) {
+          // 再试：用 innerPosition（排除可能的不可见边框偏移）
+          try {
+            const inner = await win.innerPosition();
+            clientX = cx - inner.x;
+            clientY = cy - inner.y;
+            hit = pointHits(clientX, clientY);
+          } catch {}
+        }
+        // 调试：标题栏显示命中状态，便于外部探查
+        const petEl = document.querySelector(".pet");
+        const pr = petEl?.getBoundingClientRect();
+        document.title = hit
+          ? `WinPet HIT ${clientX | 0},${clientY | 0}`
+          : `WinPet MISS ${cx},${cy} c=${clientX | 0},${clientY | 0} pet=${pr ? `${pr.left|0},${pr.top|0}-${pr.right|0},${pr.bottom|0}` : "none"} s=${scale}`;
+        await setIgnore(!hit);
+      } catch (err) {
+        document.title = `WinPet ERR ${String(err)}`;
+      } finally {
+        busy = false;
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 32);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      ignoringCursorRef.current = false;
+      if (win) win.setIgnoreCursorEvents(false).catch(() => {});
+    };
+  }, [tauriOk, screenshot]);
+
   useEffect(() => {
     if (!tauriOk || screenshot) return undefined;
     let cancelled = false; let busy = false; let lastSequence = null;
@@ -366,8 +481,9 @@ export default function App() {
       {tool === "clipboard" && (
         <div className="tool-panel clipboard-panel" onPointerDown={(e) => { e.stopPropagation(); if (e.target.closest("button, input, textarea, .clipboard-item")) return; startManualDrag(e); }}>
           <div className="tool-header" onPointerDown={(e) => { if (e.target.closest("button")) return; e.stopPropagation(); startManualDrag(e); }}><strong>剪切板 · {clipboardHistory.length}</strong><button onClick={() => setTool(null)}>×</button></div>
+          <input className="clipboard-search" value={clipboardQuery} placeholder="筛选剪切板…" onChange={(e) => setClipboardQuery(e.target.value)} onPointerDown={(e) => e.stopPropagation()} />
           <div className="clipboard-list">
-            {clipboardHistory.length === 0 ? <div className="clipboard-empty">复制文字后会自动出现在这里</div> : clipboardHistory.map((item) => (
+            {filteredClipboard.length === 0 ? <div className="clipboard-empty">{clipboardQuery ? "没有匹配的内容" : "复制文字后会自动出现在这里"}</div> : filteredClipboard.map((item) => (
               <button className="clipboard-item" key={item.id} onClick={() => copyClipboardItem(item.text)}><span className="clipboard-preview">{item.text.replace(/\s+/g, " ").trim()}</span><span className="clipboard-time">{formatClipboardTime(item.capturedAt)}</span></button>
             ))}
           </div>
