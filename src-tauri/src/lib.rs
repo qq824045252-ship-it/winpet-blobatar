@@ -667,14 +667,6 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            // 启动位置：相对默认落点下移半个窗口高度，宽度已在 tauri.conf 收窄
-            if let Some(w) = app.get_webview_window("pet") {
-                if let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) {
-                    let dy = (size.height as i32) / 2;
-                    let _ = w.set_position(tauri::PhysicalPosition::new(pos.x, pos.y + dy));
-                }
-            }
-
             let show_i = MenuItem::with_id(app, "show", "显示宠物", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;

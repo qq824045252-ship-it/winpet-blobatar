@@ -14,9 +14,9 @@
       {
         "title": "WinPet",
         "label": "pet",
-        "width": 280,
+        "width": 360,
         "height": 380,
-        "minWidth": 240,
+        "minWidth": 320,
         "minHeight": 340,
         "resizable": true,
         "fullscreen": false,
