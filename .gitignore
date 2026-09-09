@@ -31,6 +31,9 @@ src-tauri/gen/schemas
 .vscode/*
 !.vscode/extensions.json
 
+# Built executables
+*.exe
+
 # OS / temp
 Thumbs.db
 ehthumbs.db

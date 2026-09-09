@@ -389,7 +389,7 @@ export default function App() {
   }, [tool]);
   if (screenshot) { return <ScreenshotEditor capture={screenshot} onCancel={cancelScreenshot} onFinish={restorePetWindow} />; }
   return (
-    <div className="pet-root" style={tauriOk ? undefined : { transform: `translate(${pos.x}px, ${pos.y}px)` }} onDoubleClick={startRename} onContextMenu={(e) => { e.preventDefault(); setMenu(true); setEditing(false); setTool(null); }}>
+    <div className="pet-root" style={tauriOk ? undefined : { transform: `translate(${pos.x}px, ${pos.y}px)` }} onDoubleClick={startRename} onContextMenu={(e) => { e.preventDefault(); if (!e.target.closest(".pet")) return; setMenu(true); setEditing(false); setTool(null); }}>
       {showBubble && <div className="bubble"><pre>{formatStats(stats)}</pre></div>}
       <div className={`pet ${dragging ? "dragging" : ""}`} onPointerDown={onPointerDown}><Blobatar name={name} size={72} expression={activeExpr} animate="always" /></div>
       <div className="pet-shadow" />
