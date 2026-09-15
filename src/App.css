@@ -83,7 +83,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 .menu {
   top: auto;
   bottom: 88px;
-  right: 10px;
+  left: 10px;
   width: auto;
   min-width: 150px;
   height: auto;
@@ -103,7 +103,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 .submenu-flyout {
   position: absolute;
   top: -6px;
-  right: 100%;
+  left: 100%;
   width: 170px;
   height: auto;
   max-height: calc(100vh - 40px);
@@ -127,7 +127,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   content: "";
   position: absolute;
   top: 0;
-  right: 100%;
+  left: 100%;
   width: 12px;
   height: 100%;
   display: none;
@@ -135,7 +135,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 .menu-group:hover::after { display: block; }
 .submenu-flyout::-webkit-scrollbar { width: 4px; }
 .submenu-flyout::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 999px; }
-@keyframes submenuIn { from { opacity: 0; transform: translateX(6px);} to { opacity:1; transform: translateX(0);} }
+@keyframes submenuIn { from { opacity: 0; transform: translateX(-6px);} to { opacity:1; transform: translateX(0);} }
 .submenu-title {
   font-size: 11px;
   color: #8f9ab1;
@@ -145,7 +145,12 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 }
 .submenu-sep { height:1px; margin:4px 6px; background: rgba(255,255,255,0.07); }
 .submenu-row { display:flex; align-items:center; gap:4px; }
-.submenu-row .submenu-item { flex:1; min-width:0; }
+.submenu-row .submenu-item {
+  flex:1; min-width:0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .submenu-del {
   width:22px; height:22px; padding:0 !important; flex-shrink:0;
   background: transparent !important; border-color: transparent !important;
@@ -155,7 +160,9 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 .submenu-empty { padding:8px; font-size:10px; color:#6b7588; text-align:center; }
 .submenu-add {
   margin-top:4px;
-  background: rgba(122,162,255,0.12) !important;
+  position: sticky;
+  bottom: 0;
+  background: rgba(24,28,40,0.98) !important;
   border-color: rgba(122,162,255,0.22) !important;
   color:#a9bfff !important;
   font-size:12px !important;
@@ -445,7 +452,7 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   position: absolute;
   left: 8px;
   right: 8px;
-  top: 8px;
+  bottom: 92px;
   z-index: 40;
   padding: 7px 10px;
   overflow: hidden;
@@ -459,3 +466,4 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.notice--above-bubble { bottom: 140px; }

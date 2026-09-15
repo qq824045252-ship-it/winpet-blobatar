@@ -12,7 +12,8 @@ use sysinfo::{Disks, Networks, System};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::WebviewWindowBuilder;
-use tauri::{AppHandle, Manager, WebviewUrl, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WindowEvent};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -51,9 +52,25 @@ extern "system" {
     fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
     fn GetCursorPos(lpPoint: *mut WinPoint) -> i32;
     fn GetAsyncKeyState(vKey: i32) -> i16;
+    fn GetWindowLongPtrW(hWnd: isize, nIndex: i32) -> isize;
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "dwmapi")]
+extern "system" {
+    fn DwmGetWindowAttribute(
+        hWnd: isize,
+        dwAttribute: u32,
+        pvAttribute: *mut std::ffi::c_void,
+        cbAttribute: u32,
+    ) -> i32;
 }
 
 const GW_HWNDNEXT: u32 = 2;
+const GWL_EXSTYLE: i32 = -20;
+const WS_EX_TRANSPARENT: isize = 0x20;
+const DWMWA_EXTENDED_FRAME_BOUNDS: u32 = 9;
+const DWMWA_CLOAKED: u32 = 14;
 const VK_LBUTTON: i32 = 0x01;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -450,7 +467,13 @@ fn prepare_screenshot(app: tauri::AppHandle) -> Result<ScreenshotCapture, String
     }
     thread::sleep(Duration::from_millis(120));
 
+    // powershell.exe 默认 DPI-unaware，VirtualScreen/CopyFromScreen 拿到的是缩放后的
+    // 逻辑像素（如 175% 缩放下 3200x2000 只报 1829x1143），遮罩窗口按物理像素铺不满屏幕。
+    // 先把 PS 进程切到 Per-Monitor V2（-4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2），
+    // 让截图尺寸和窗口检测的 GetWindowRect/DWM 坐标同为物理像素。
     let script = r#"
+Add-Type -Namespace Win32Util -Name Dpi -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);'
+[Win32Util.Dpi]::SetProcessDpiAwarenessContext([System.IntPtr](-4)) | Out-Null
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -605,13 +628,35 @@ fn window_under_point(app: tauri::AppHandle, x: i32, y: i32) -> Option<WindowRec
         if unsafe { IsWindowVisible(cur) } == 0 {
             continue;
         }
+        // 点击穿透窗口对命中测试透明，用户实际看到的是它下层的窗口
+        if unsafe { GetWindowLongPtrW(cur, GWL_EXSTYLE) } & WS_EX_TRANSPARENT != 0 {
+            continue;
+        }
         let mut pid: u32 = 0;
         unsafe { GetWindowThreadProcessId(cur, &mut pid) };
         if pid == std::process::id() {
             continue;
         }
+        // cloaked 窗口（如最小化的 UWP 应用）IsWindowVisible 仍返回 true，需要额外排除
+        let mut cloaked: u32 = 0;
+        if unsafe {
+            DwmGetWindowAttribute(cur, DWMWA_CLOAKED, &mut cloaked as *mut u32 as _, 4)
+        } == 0
+            && cloaked != 0
+        {
+            continue;
+        }
+        // DWM 可视边框不含 Win10/11 窗口四周 ~7px 的隐形 resize 边框，比 GetWindowRect 贴合用户所见
         let mut r = WinRect::default();
-        if unsafe { GetWindowRect(cur, &mut r) } == 0 {
+        let has_rect = unsafe {
+            DwmGetWindowAttribute(
+                cur,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                &mut r as *mut WinRect as _,
+                16,
+            )
+        } == 0 || unsafe { GetWindowRect(cur, &mut r) } != 0;
+        if !has_rect {
             continue;
         }
         if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
@@ -666,6 +711,7 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let show_i = MenuItem::with_id(app, "show", "显示宠物", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -695,6 +741,19 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // 全局截图热键：任意窗口下 Alt+P 触发截图；宠物隐藏时 webview 仍存活可收到事件。
+            // 注册失败（被其他程序占用等）只告警，不影响启动。
+            if let Err(err) = app.global_shortcut().on_shortcut(
+                Shortcut::new(Some(Modifiers::ALT), Code::KeyP),
+                |app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let _ = app.emit("shortcut-screenshot", ());
+                    }
+                },
+            ) {
+                log::warn!("注册截图快捷键 Alt+P 失败: {err}");
+            }
 
             Ok(())
         })

@@ -90,6 +90,8 @@ export default function App() {
   const noticeTimer = useRef(null);
   const windowSnapshotRef = useRef(null);
   const ignoringCursorRef = useRef(false);
+  const menuCloseTimer = useRef(null);
+  const interactiveOpenRef = useRef(false);
   const activeExpr = EXPRESSIONS[autoExpr] ?? idle;
   const filteredClipboard = useMemo(() => {
     const q = clipboardQuery.trim().toLowerCase();
@@ -115,11 +117,6 @@ export default function App() {
         }
         await win.setIgnoreCursorEvents(ignore);
         ignoringCursorRef.current = ignore;
-        if (ignore) {
-          setMenu(false);
-          setProgramOpen(false);
-          setEditing(false);
-        }
       } catch {}
     };
     if (screenshot) {
@@ -187,6 +184,21 @@ export default function App() {
         document.title = hit
           ? `WinPet HIT ${clientX | 0},${clientY | 0}`
           : `WinPet MISS ${cx},${cy} c=${clientX | 0},${clientY | 0} pet=${pr ? `${pr.left|0},${pr.top|0}-${pr.right|0},${pr.bottom|0}` : "none"} s=${scale}`;
+        // 菜单/改名面板的关闭加 600ms 缓冲：光标短暂滑出（跨缝隙、越界几像素）不会立刻关，
+        // 缓冲期内移回命中区即取消；移出后点击桌面依旧穿透，只是菜单稍后才收起
+        if (hit) {
+          if (menuCloseTimer.current) {
+            clearTimeout(menuCloseTimer.current);
+            menuCloseTimer.current = null;
+          }
+        } else if (interactiveOpenRef.current && !menuCloseTimer.current) {
+          menuCloseTimer.current = setTimeout(() => {
+            menuCloseTimer.current = null;
+            setMenu(false);
+            setProgramOpen(false);
+            setEditing(false);
+          }, 600);
+        }
         await setIgnore(!hit);
       } catch (err) {
         document.title = `WinPet ERR ${String(err)}`;
@@ -199,10 +211,14 @@ export default function App() {
     return () => {
       cancelled = true;
       clearInterval(timer);
+      clearTimeout(menuCloseTimer.current);
+      menuCloseTimer.current = null;
       ignoringCursorRef.current = false;
       if (win) win.setIgnoreCursorEvents(false).catch(() => {});
     };
   }, [tauriOk, screenshot]);
+
+  useEffect(() => { interactiveOpenRef.current = menu || editing; }, [menu, editing]);
 
   useEffect(() => {
     if (!tauriOk || screenshot) return undefined;
@@ -352,6 +368,21 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+  // 全局快捷键 Alt+P：后端 global-shortcut 按下后 emit shortcut-screenshot；
+  // 宠物隐藏时 webview 仍存活，可正常拉起截图。截图编辑中忽略重复触发。
+  useEffect(() => {
+    if (!tauriOk) return undefined;
+    let unlisten;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const un = await listen("shortcut-screenshot", () => { if (!screenshot) startScreenshot(); });
+        if (cancelled) un(); else unlisten = un;
+      } catch {}
+    })();
+    return () => { cancelled = true; if (unlisten) unlisten(); };
+  }, [tauriOk, screenshot]);
   // Tauri 原生文件拖拽（WebView 的 HTML5 DataTransfer 在 Tauri 下拿不到 path，需用 onDragDropEvent）
   useEffect(() => {
     if (tool !== "program-manager") return;
@@ -405,7 +436,7 @@ export default function App() {
               </button>
             </div>
             <button onClick={() => openTool("clipboard")}>剪切板 <span style={{opacity:0.6, fontSize:"10px"}}>Alt+C</span></button>
-            <button onClick={startScreenshot}>截图</button>
+            <button onClick={startScreenshot}>截图 <span style={{opacity:0.6, fontSize:"10px"}}>Alt+P</span></button>
             <button onClick={async () => { setMenu(false); try { await invokeNative("restart_explorer"); toast("已重启资源管理器"); } catch (err) { toast(String(err)); } }}>重启资源管理器</button>
             <div className="menu-separator" />
             <button onClick={closeWindow}>隐藏到后台</button>
@@ -489,7 +520,7 @@ export default function App() {
           </div>
         </div>
       )}
-      {notice && <div className="notice">{notice}</div>}
+      {notice && <div className={`notice${showBubble ? " notice--above-bubble" : ""}`}>{notice}</div>}
     </div>
   );
 }
