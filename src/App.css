@@ -450,8 +450,9 @@ body { font-family: "Maple Mono NF CN", system-ui, "Segoe UI", Roboto, sans-seri
 
 .notice {
   position: absolute;
-  left: 8px;
-  right: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 16px);
   bottom: 92px;
   z-index: 40;
   padding: 7px 10px;
