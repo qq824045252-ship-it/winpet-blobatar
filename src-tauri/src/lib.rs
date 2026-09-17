@@ -66,6 +66,84 @@ extern "system" {
     ) -> i32;
 }
 
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct BitmapInfoHeader {
+    size: u32,
+    width: i32,
+    height: i32,
+    planes: u16,
+    bit_count: u16,
+    compression: u32,
+    size_image: u32,
+    x_pels_per_meter: i32,
+    y_pels_per_meter: i32,
+    clr_used: u32,
+    clr_important: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct BitmapInfo {
+    header: BitmapInfoHeader,
+    colors: [u32; 3],
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+extern "system" {
+    fn GetDC(hWnd: isize) -> isize;
+    fn ReleaseDC(hWnd: isize, hDC: isize) -> i32;
+    fn GetSystemMetrics(nIndex: i32) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "gdi32")]
+extern "system" {
+    fn CreateCompatibleDC(hdc: isize) -> isize;
+    fn DeleteDC(hdc: isize) -> i32;
+    fn CreateDIBSection(
+        hdc: isize,
+        pbmi: *const BitmapInfo,
+        usage: u32,
+        ppvBits: *mut *mut std::ffi::c_void,
+        hSection: isize,
+        offset: u32,
+    ) -> isize;
+    fn SelectObject(hdc: isize, h: isize) -> isize;
+    fn DeleteObject(h: isize) -> i32;
+    fn BitBlt(
+        hdcDest: isize,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        hdcSrc: isize,
+        x1: i32,
+        y1: i32,
+        rop: u32,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+const SM_XVIRTUALSCREEN: i32 = 76;
+#[cfg(target_os = "windows")]
+const SM_YVIRTUALSCREEN: i32 = 77;
+#[cfg(target_os = "windows")]
+const SM_CXVIRTUALSCREEN: i32 = 78;
+#[cfg(target_os = "windows")]
+const SM_CYVIRTUALSCREEN: i32 = 79;
+#[cfg(target_os = "windows")]
+const SRCCOPY: u32 = 0x00CC_0020;
+#[cfg(target_os = "windows")]
+const CAPTUREBLT: u32 = 0x4000_0000;
+#[cfg(target_os = "windows")]
+const DIB_RGB_COLORS: u32 = 0;
+#[cfg(target_os = "windows")]
+const BI_RGB: u32 = 0;
+
 const GW_HWNDNEXT: u32 = 2;
 const GWL_EXSTYLE: i32 = -20;
 const WS_EX_TRANSPARENT: isize = 0x20;
@@ -460,6 +538,128 @@ fn set_clipboard(text: String) -> Result<(), String> {
     }
 }
 
+// 把截图文件放进剪贴板（CF_HDROP 文件对象）：微信/QQ/资源管理器粘贴得到图片，
+// 终端/编辑器粘贴得到路径。Set-Clipboard -Path 一条 cmdlet 搞定，无需自绘位图格式。
+fn set_clipboard_file(path: &Path) -> Result<(), String> {
+    let mut child = powershell("$path = [Console]::In.ReadToEnd().Trim(); Set-Clipboard -Path $path")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("写入剪贴板失败: {err}"))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(path.to_string_lossy().as_bytes())
+            .map_err(|err| format!("写入剪贴板失败: {err}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("写入剪贴板失败: {err}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+// 用 GDI 直接抓虚拟屏幕（物理像素）。进程已被 tao 设为 PerMonitorV2，GetSystemMetrics/
+// BitBlt 与 window_under_point 的 GetWindowRect/DWM 坐标同一空间，不需要再切 DPI。
+// 取代原先每次新起 powershell.exe + 运行时编译 C# 的做法，省掉进程启动与编译约 0.7s。
+#[cfg(target_os = "windows")]
+fn capture_virtual_screen() -> Result<(Vec<u8>, i32, i32, u32, u32), String> {
+    unsafe {
+        let left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if width <= 0 || height <= 0 {
+            return Err("无法获取虚拟屏幕尺寸".into());
+        }
+
+        let screen_dc = GetDC(0);
+        if screen_dc == 0 {
+            return Err("获取屏幕 DC 失败".into());
+        }
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        if mem_dc == 0 {
+            ReleaseDC(0, screen_dc);
+            return Err("创建内存 DC 失败".into());
+        }
+
+        // height 取负 = 自顶向下的位图，省掉一次行序翻转
+        let info = BitmapInfo {
+            header: BitmapInfoHeader {
+                size: std::mem::size_of::<BitmapInfoHeader>() as u32,
+                width,
+                height: -height,
+                planes: 1,
+                bit_count: 32,
+                compression: BI_RGB,
+                ..Default::default()
+            },
+            colors: [0; 3],
+        };
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let bitmap = CreateDIBSection(mem_dc, &info, DIB_RGB_COLORS, &mut bits, 0, 0);
+        if bitmap == 0 || bits.is_null() {
+            if bitmap != 0 {
+                DeleteObject(bitmap);
+            }
+            DeleteDC(mem_dc);
+            ReleaseDC(0, screen_dc);
+            return Err("创建位图失败".into());
+        }
+
+        let previous = SelectObject(mem_dc, bitmap);
+        let copied =
+            BitBlt(mem_dc, 0, 0, width, height, screen_dc, left, top, SRCCOPY | CAPTUREBLT) != 0;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        if copied {
+            // GDI 给的是 BGRA 且 alpha 未定义；顺带转成 PNG 需要的 RGBA，省一次全图拷贝
+            let source = std::slice::from_raw_parts(bits as *const u8, pixels.len());
+            for (dst, src) in pixels.chunks_exact_mut(4).zip(source.chunks_exact(4)) {
+                dst[0] = src[2];
+                dst[1] = src[1];
+                dst[2] = src[0];
+                dst[3] = 255;
+            }
+        }
+        SelectObject(mem_dc, previous);
+        DeleteObject(bitmap);
+        DeleteDC(mem_dc);
+        ReleaseDC(0, screen_dc);
+
+        if !copied {
+            return Err("抓屏失败".into());
+        }
+        Ok((pixels, left, top, width as u32, height as u32))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn capture_virtual_screen() -> Result<(Vec<u8>, i32, i32, u32, u32), String> {
+    Err("截图仅支持 Windows".into())
+}
+
+// Fast 档：整屏 PNG 用默认档约 260ms，Fast 体积略大但快数倍
+fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|err| format!("PNG 编码失败: {err}"))?;
+        writer
+            .write_image_data(rgba)
+            .map_err(|err| format!("PNG 编码失败: {err}"))?;
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 fn prepare_screenshot(app: tauri::AppHandle) -> Result<ScreenshotCapture, String> {
     if let Some(window) = app.get_webview_window("pet") {
@@ -467,47 +667,20 @@ fn prepare_screenshot(app: tauri::AppHandle) -> Result<ScreenshotCapture, String
     }
     thread::sleep(Duration::from_millis(120));
 
-    // powershell.exe 默认 DPI-unaware，VirtualScreen/CopyFromScreen 拿到的是缩放后的
-    // 逻辑像素（如 175% 缩放下 3200x2000 只报 1829x1143），遮罩窗口按物理像素铺不满屏幕。
-    // 先把 PS 进程切到 Per-Monitor V2（-4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2），
-    // 让截图尺寸和窗口检测的 GetWindowRect/DWM 坐标同为物理像素。
-    let script = r#"
-Add-Type -Namespace Win32Util -Name Dpi -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);'
-[Win32Util.Dpi]::SetProcessDpiAwarenessContext([System.IntPtr](-4)) | Out-Null
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
-$dir = Join-Path ([IO.Path]::GetTempPath()) 'WinPet'
-New-Item -ItemType Directory -Force -Path $dir | Out-Null
-$path = Join-Path $dir ('capture-' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + '.png')
-$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-try {
-  $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-  $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-  [pscustomobject]@{
-    path = $path
-    left = $bounds.Left
-    top = $bounds.Top
-    width = $bounds.Width
-    height = $bounds.Height
-  } | ConvertTo-Json -Compress
-} finally {
-  $graphics.Dispose()
-  $bitmap.Dispose()
-}
-"#;
-
     let result = (|| {
-        let output = powershell(script)
-            .output()
-            .map_err(|err| format!("截图失败: {err}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        let json = String::from_utf8_lossy(&output.stdout);
-        serde_json::from_str::<ScreenshotCapture>(json.trim())
-            .map_err(|err| format!("截图信息解析失败: {err}"))
+        let (pixels, left, top, width, height) = capture_virtual_screen()?;
+        let data = encode_png(width, height, &pixels)?;
+        let dir = temp_capture_root();
+        fs::create_dir_all(&dir).map_err(|err| format!("无法创建临时截图目录: {err}"))?;
+        let path = dir.join(format!("capture-{}.png", timestamp_millis()));
+        fs::write(&path, data).map_err(|err| format!("保存截图失败: {err}"))?;
+        Ok(ScreenshotCapture {
+            path: path.to_string_lossy().to_string(),
+            left,
+            top,
+            width,
+            height,
+        })
     })();
 
     if result.is_err() {
@@ -538,6 +711,12 @@ fn save_screenshot_png(
     fs::create_dir_all(&dir).map_err(|err| format!("无法创建截图目录: {err}"))?;
     let path = dir.join(format!("winpet-{}.png", timestamp_millis()));
     fs::write(&path, bytes).map_err(|err| format!("保存截图失败: {err}"))?;
+    if let Err(err) = set_clipboard_file(&path) {
+        return Err(format!(
+            "已保存到 {}，但写入剪贴板失败: {err}",
+            path.to_string_lossy()
+        ));
+    }
     remove_temp_capture(&source_path);
     Ok(path.to_string_lossy().to_string())
 }

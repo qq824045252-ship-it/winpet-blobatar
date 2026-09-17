@@ -280,7 +280,7 @@ export default function App() {
       await current.hide(); setScreenshot(null); await new Promise((resolve) => setTimeout(resolve, 20));
       if (snapshot) { await current.setPosition(snapshot.position); await current.setSize(snapshot.size); await current.setResizable(snapshot.resizable); }
       await current.show(); await current.setFocus();
-    } catch {} windowSnapshotRef.current = null; if (path) toast(`截图已保存：${path}`);
+    } catch {} windowSnapshotRef.current = null; if (path) toast(`截图已保存并复制到剪贴板：${path}`);
   };
   const startScreenshot = async () => {
     setMenu(false); setTool(null); setProgramOpen(false);

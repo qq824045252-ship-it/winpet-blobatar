@@ -898,7 +898,7 @@ export default function ScreenshotEditor({ capture, onFinish, onCancel }) {
           <button className="shot-tool-action shot-tool-pin" title="钉住" onClick={() => finish("pin")} disabled={saving}>
             {ICONS.pin}
           </button>
-          <button className="shot-tool-action shot-tool-save" onClick={() => finish("save")} disabled={saving}>
+          <button className="shot-tool-action shot-tool-save" title="保存到图片库并复制到剪贴板 (Ctrl+S)" onClick={() => finish("save")} disabled={saving}>
             {saving ? "处理中…" : "保存"}
           </button>
         </div>

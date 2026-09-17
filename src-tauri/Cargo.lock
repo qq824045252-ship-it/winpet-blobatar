@@ -70,8 +70,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "log",
+ "png 0.17.16",
  "serde",
- "serde_json",
  "sysinfo",
  "tauri",
  "tauri-build",
