@@ -41,6 +41,28 @@ Git Bash 里 `npm` 不在 PATH 上，用 `cmd //c "npm run lint"` 调用。
 - **两个实例同时运行**时，后启动的实例抢不到 Alt+P 全局热键，只在日志里写一条 warning，
   界面上却仍标着「Alt+P」——表现就是「热键没反应，点宠物菜单却正常」。已由单实例保护覆盖。
 
+## 设置面板与配置持久化
+
+- 设置入口有两个：宠物右键菜单「设置」、托盘菜单「设置」（托盘项会 `emit("open-settings")`，
+  前端监听后显示宠物并打开面板）。面板是宠物窗口内的 `.tool-panel.settings-panel`，四个标签页：
+  快捷键 / 指标 / 外观 / 程序（`App.jsx` 的 `settingsTab`）。
+- **界面类设置**（宠物大小、气泡指标、程序列表、宠物名）存 localStorage；
+  **全局快捷键**存 Rust 侧的 `settings.json`，路径 `app.path().app_config_dir()/settings.json`
+  （本机 `%APPDATA%\com.winpet.blobatar\settings.json`）。原因是热键必须在 `setup` 阶段注册，
+  那时 webview 还没加载，前端传不进去。
+- 快捷键命令：`get_settings` / `set_screenshot_shortcut` / `suspend_screenshot_shortcut`。
+  改快捷键时先 `unregister_all()` 再注册（否则新旧相同会 "already registered"），
+  注册失败会尽力把旧快捷键装回去。录制期间前端会先调 `suspend_...`，否则按到当前快捷键
+  会顺带触发一次截图。
+- 前端录制直接送 `KeyboardEvent.code`（`KeyP`/`Digit1`/`F5`/`ArrowUp` 都是 `parse_key` 认的写法），
+  修饰键固定 Ctrl/Alt/Shift/Super，且要求至少一个修饰键。
+- **同步 `#[tauri::command]` 跑在主线程**，`global_shortcut` 内部走 `run_on_main_thread`；
+  wry 的 `send_user_message` 在主线程时是**直接内联执行**的，所以同步命令里调它不会死锁。
+- 宠物大小改动会同步 `setPosition`/`setSize`：宠物在窗口内底部对齐，窗口高度 ±delta 时必须
+  把窗口 y 也 ∓delta，否则宠物会跟着窗口下移。delta 用 `(size - prev) * scaleFactor` 换算成物理像素。
+- `get_stats` 除 cpu/mem/disk/net 外还返回 swap / mem_used / mem_total / disk_free / procs / uptime，
+  前端「指标」页从 `METRIC_DEFS` 目录里增删。进程枚举较重，`Monitor` 里每 5 次采样才刷新一次进程列表。
+
 ## 截图管线（改动前先看这里）
 
 `prepare_screenshot` 走 GDI 原生抓屏：`capture_virtual_screen`（BitBlt + BGRA→RGBA）

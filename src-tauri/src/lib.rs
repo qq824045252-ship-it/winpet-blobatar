@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{Disks, Networks, System};
+use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::WebviewWindowBuilder;
@@ -154,12 +154,39 @@ const VK_LBUTTON: i32 = 0x01;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 
+const DEFAULT_SCREENSHOT_SHORTCUT: &str = "Alt+P";
+
 #[derive(serde::Serialize, Clone)]
 struct Stats {
     cpu: f32,
     mem: f32,
     disk: f32,
     net: f32,
+    // 可选的额外指标：前端「设置 → 指标」里按需添加
+    swap: f32,
+    mem_used: f32,
+    mem_total: f32,
+    disk_free: f32,
+    procs: usize,
+    uptime: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct AppSettings {
+    #[serde(default = "default_screenshot_shortcut")]
+    screenshot_shortcut: String,
+}
+
+fn default_screenshot_shortcut() -> String {
+    DEFAULT_SCREENSHOT_SHORTCUT.to_string()
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            screenshot_shortcut: default_screenshot_shortcut(),
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -176,6 +203,7 @@ struct Monitor {
     disks: Disks,
     networks: Networks,
     last: Instant,
+    tick: u32,
 }
 
 impl Monitor {
@@ -187,6 +215,7 @@ impl Monitor {
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
             last: Instant::now(),
+            tick: 0,
         }
     }
 
@@ -195,6 +224,11 @@ impl Monitor {
         self.sys.refresh_memory();
         self.disks.refresh();
         self.networks.refresh();
+        // 进程枚举比其它项重得多（每秒全量刷新会拖慢同步命令），5 秒一次足够
+        self.tick = self.tick.wrapping_add(1);
+        if self.tick % 5 == 1 {
+            self.sys.refresh_processes(ProcessesToUpdate::All, true);
+        }
         let cpu = self.sys.global_cpu_usage();
         let total = self.sys.total_memory();
         let used = self.sys.used_memory();
@@ -204,15 +238,20 @@ impl Monitor {
             0.0
         };
         let mut avail = f32::MAX;
+        let mut disk_free = f32::MAX;
         for d in self.disks.list() {
             let t = d.total_space();
             let a = d.available_space();
             if t > 0 {
                 avail = avail.min(a as f32 / t as f32 * 100.0);
             }
+            disk_free = disk_free.min(a as f32 / 1024.0 / 1024.0 / 1024.0);
         }
         if avail == f32::MAX {
             avail = 100.0;
+        }
+        if disk_free == f32::MAX {
+            disk_free = 0.0;
         }
         let mut rx = 0u64;
         let mut tx = 0u64;
@@ -226,11 +265,24 @@ impl Monitor {
             .max(0.05);
         let net = (rx + tx) as f32 / 1024.0 / dt;
         self.last = Instant::now();
+        let total_swap = self.sys.total_swap();
+        let swap = if total_swap > 0 {
+            self.sys.used_swap() as f32 / total_swap as f32 * 100.0
+        } else {
+            0.0
+        };
+        const GIB: f32 = 1024.0 * 1024.0 * 1024.0;
         Stats {
             cpu,
             mem,
             disk: avail,
             net,
+            swap,
+            mem_used: used as f32 / GIB,
+            mem_total: total as f32 / GIB,
+            disk_free,
+            procs: self.sys.processes().len(),
+            uptime: System::uptime(),
         }
     }
 }
@@ -349,6 +401,101 @@ fn create_pin_window(
 #[tauri::command]
 fn get_stats(state: tauri::State<'_, Mutex<Monitor>>) -> Stats {
     state.lock().unwrap().sample()
+}
+
+// 设置存到 app_config_dir/settings.json（例如 %APPDATA%\com.winpet.blobatar\settings.json）。
+// 全局快捷键必须在 setup 阶段注册，那时前端还没加载，所以只能由 Rust 自己读配置文件。
+fn settings_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join("settings.json"))
+}
+
+fn load_settings(app: &AppHandle) -> AppSettings {
+    let Some(path) = settings_path(app) else {
+        return AppSettings::default();
+    };
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<AppSettings>(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn persist_settings(app: &AppHandle, settings: &AppSettings) {
+    let Some(path) = settings_path(app) else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(raw) = serde_json::to_string_pretty(settings) {
+        if let Err(err) = fs::write(&path, raw) {
+            log::warn!("保存设置失败: {err}");
+        }
+    }
+}
+
+// 注册全局截图热键：任意窗口下按下都会 emit shortcut-screenshot，宠物隐藏时 webview 仍存活可收到事件。
+fn attach_screenshot_shortcut(app: &AppHandle, shortcut: Shortcut) -> Result<(), String> {
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                let _ = app.emit("shortcut-screenshot", ());
+            }
+        })
+        .map_err(|err| err.to_string())?;
+    log::info!("已注册截图快捷键: {shortcut}");
+    Ok(())
+}
+
+fn parse_shortcut(accelerator: &str) -> Result<Shortcut, String> {
+    accelerator
+        .parse::<Shortcut>()
+        .map_err(|err| format!("无法识别快捷键 \"{accelerator}\": {err}"))
+}
+
+#[tauri::command]
+fn get_settings(state: tauri::State<'_, Mutex<AppSettings>>) -> AppSettings {
+    state.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn set_screenshot_shortcut(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppSettings>>,
+    accelerator: String,
+) -> Result<String, String> {
+    let accelerator = accelerator.trim().to_string();
+    if accelerator.is_empty() {
+        return Err("快捷键不能为空".into());
+    }
+    let shortcut = parse_shortcut(&accelerator)?;
+    let previous = state
+        .lock()
+        .map(|s| s.screenshot_shortcut.clone())
+        .unwrap_or_else(|_| default_screenshot_shortcut());
+    // 先全注销再注册，避免新旧快捷键相同导致 "already registered"；
+    // 注册失败时尽力把旧快捷键装回去，不能让用户两头落空。
+    let _ = app.global_shortcut().unregister_all();
+    if let Err(err) = attach_screenshot_shortcut(&app, shortcut) {
+        if let Ok(prev) = parse_shortcut(&previous) {
+            let _ = attach_screenshot_shortcut(&app, prev);
+        }
+        return Err(format!("注册快捷键失败（可能已被其它程序占用）: {err}"));
+    }
+    let mut settings = state.lock().map_err(|_| "设置状态已损坏".to_string())?;
+    settings.screenshot_shortcut = accelerator.clone();
+    persist_settings(&app, &settings);
+    Ok(accelerator)
+}
+
+// 录制新快捷键期间临时注销，否则按到当前快捷键会顺带触发一次截图
+#[tauri::command]
+fn suspend_screenshot_shortcut(app: tauri::AppHandle) -> Result<(), String> {
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -898,9 +1045,14 @@ pub fn run() {
         )
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            let settings = load_settings(app.handle());
+            let screenshot_shortcut = settings.screenshot_shortcut.clone();
+            app.manage(Mutex::new(settings));
+
             let show_i = MenuItem::with_id(app, "show", "显示宠物", true, None::<&str>)?;
+            let settings_i = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&show_i, &settings_i, &quit_i])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -909,6 +1061,10 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_pet(app),
+                    "settings" => {
+                        show_pet(app);
+                        let _ = app.emit("open-settings", ());
+                    }
                     "quit" => {
                         app.state::<QuitFlag>().0.store(true, Ordering::SeqCst);
                         app.exit(0);
@@ -927,17 +1083,12 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 全局截图热键：任意窗口下 Alt+P 触发截图；宠物隐藏时 webview 仍存活可收到事件。
-            // 注册失败（被其他程序占用等）只告警，不影响启动。
-            if let Err(err) = app.global_shortcut().on_shortcut(
-                Shortcut::new(Some(Modifiers::ALT), Code::KeyP),
-                |app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        let _ = app.emit("shortcut-screenshot", ());
-                    }
-                },
-            ) {
-                log::warn!("注册截图快捷键 Alt+P 失败: {err}");
+            // 全局截图热键：任意窗口下触发截图。快捷键可在「设置」里改，持久化在 settings.json。
+            // 注册失败（被其他程序占用、配置损坏等）只告警，不影响启动。
+            let shortcut = parse_shortcut(&screenshot_shortcut)
+                .unwrap_or_else(|_| Shortcut::new(Some(Modifiers::ALT), Code::KeyP));
+            if let Err(err) = attach_screenshot_shortcut(app.handle(), shortcut) {
+                log::warn!("注册截图快捷键 {screenshot_shortcut} 失败: {err}");
             }
 
             Ok(())
@@ -980,6 +1131,9 @@ pub fn run() {
             get_pin_path,
             save_pin_png,
             window_under_point,
+            get_settings,
+            set_screenshot_shortcut,
+            suspend_screenshot_shortcut,
             quit_app
         ])
         .run(tauri::generate_context!())
