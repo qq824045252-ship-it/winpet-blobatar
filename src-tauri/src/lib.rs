@@ -885,6 +885,12 @@ pub fn run() {
         .manage(Mutex::new(Monitor::new()))
         .manage(QuitFlag::default())
         .manage(PinStore::default())
+        // 单实例：必须第一个注册，否则其它插件已经初始化过了。
+        // 第二个实例在这里被拦下并退出，把已有的宠物窗口显示出来。
+        // 没有它的话第二个实例会静默抢不到 Alt+P 全局热键（注册失败只写一条 warning）。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_pet(app);
+        }))
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)

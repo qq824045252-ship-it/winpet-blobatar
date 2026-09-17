@@ -14,6 +14,20 @@ Tauri v2 + React 19 桌面宠物，Windows 专用：截图、剪贴板、窗口�
 
 Git Bash 里 `npm` 不在 PATH 上，用 `cmd //c "npm run lint"` 调用。
 
+## 构建与运行（先看这里）
+
+- **构建统一走 `npm run tauri:build`，不要用裸 `cargo build --release`**。`tauri-macros` 用
+  `dev: cfg!(not(feature = "custom-protocol"))` 决定加载 dev URL 还是内嵌前端资源，而这个 feature
+  只有 Tauri CLI 构建时才会被启用（CLI 会启用依赖级的 `tauri/custom-protocol`）。裸 cargo 构建
+  产出的 exe **不内嵌前端资源、而是去连 `http://localhost:5179`**，没有 Vite 时窗口只会显示
+  「无法访问此页面 / 拒绝连接」。
+  判断方法：内嵌了资源的 exe 约 22 MB，没内嵌的约 10 MB。
+- 裸 cargo 构建还有个坑：它检测不到 `dist/` 变化，不会重新嵌入前端资源（编译 1~2 秒就“成功”，
+  exe 里还是旧前端）。
+- 为了连裸 `cargo build --release` 也能得到可独立运行的 exe，`Cargo.toml` 里补了 Tauri 模板标准的
+  `[features] custom-protocol = ["tauri/custom-protocol"]`（模板里标着 DO NOT REMOVE）。
+- 单实例保护用 `tauri-plugin-single-instance`，必须**第一个**注册插件（其它插件在它之前初始化就拦不住了）。
+
 ## 需要注意的坑
 
 - **`cargo test` 二进制不是 DPI 感知的**：tao 只在创建事件循环时才调
@@ -24,6 +38,8 @@ Git Bash 里 `npm` 不在 PATH 上，用 `cmd //c "npm run lint"` 调用。
   该窗口是 `transparent: true` + `alwaysOnTop`，铺满全屏时合成开销明显。
 - 截图期间前端的两处轮询（500ms 剪贴板、32ms 光标命中）都有 `if (screenshot) return`
   提前退出，不会叠加到截图上。
+- **两个实例同时运行**时，后启动的实例抢不到 Alt+P 全局热键，只在日志里写一条 warning，
+  界面上却仍标着「Alt+P」——表现就是「热键没反应，点宠物菜单却正常」。已由单实例保护覆盖。
 
 ## 截图管线（改动前先看这里）
 

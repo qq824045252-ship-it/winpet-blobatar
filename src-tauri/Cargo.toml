@@ -22,3 +22,8 @@ tauri = { version = "2.11.3", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-log = "2"
 sysinfo = { version = "0.32", features = ["network", "disk"] }
 tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-single-instance = "2"
+
+[features]
+# This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
