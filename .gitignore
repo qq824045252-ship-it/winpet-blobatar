@@ -45,3 +45,6 @@ Desktop.ini
 *.njsproj
 *.sln
 *.sw?
+
+# 本地 AI/tooling 状态
+.commandcode/
